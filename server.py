@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/data/data/com.termux/files/usr/bin/env python3
 """
 Antigravity CLI - Lightweight Mobile Web Dashboard Server
 Zero-dependency Python 3 Backend using standard library http.server & sqlite3.
