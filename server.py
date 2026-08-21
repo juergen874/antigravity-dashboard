@@ -37,7 +37,8 @@ current_state = {
     "model": "Gemini 3.7 Flash",
     "agent_mode": "Autonomous Code Agent",
     "connected_since": time.time(),
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "conversation_id": None
 }
 state_lock = Lock()
 
@@ -97,7 +98,7 @@ def execute_shell_command(cmd, cwd):
             cwd=cwd,
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=45
         )
         elapsed = round(time.time() - start, 2)
         return {
@@ -112,8 +113,8 @@ def execute_shell_command(cmd, cwd):
             "success": False,
             "returncode": -1,
             "stdout": "",
-            "stderr": "Command timed out after 30s",
-            "duration": ">30s"
+            "stderr": "Command timed out after 45s",
+            "duration": ">45s"
         }
     except Exception as e:
         return {
@@ -122,6 +123,92 @@ def execute_shell_command(cmd, cwd):
             "stdout": "",
             "stderr": str(e),
             "duration": "0s"
+        }
+
+def execute_agy_agent(prompt, cwd, conversation_id=None, images=None):
+    """
+    Executes the prompt using the official Antigravity CLI (agy) in print mode.
+    Maintains conversation session if conversation_id is provided.
+    """
+    augmented_prompt = prompt
+    if images:
+        img_paths = []
+        for img_url in images:
+            filename = os.path.basename(img_url)
+            full_path = os.path.join(UPLOADS_DIR, filename)
+            if os.path.exists(full_path):
+                img_paths.append(full_path)
+        if img_paths:
+            augmented_prompt += f"\n\n[Hinweis: Der Benutzer hat folgende Bilddatei(en) auf dem Gerät hochgeladen: {', '.join(img_paths)}]"
+
+    cmd = ["agy", "--dangerously-skip-permissions", "--output-format", "json"]
+    if conversation_id:
+        cmd.extend(["--conversation", conversation_id])
+    
+    cmd.extend(["--print", augmented_prompt])
+
+    start_time = time.time()
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=240
+        )
+        elapsed = round(time.time() - start_time, 2)
+
+        if proc.returncode == 0 and proc.stdout.strip():
+            try:
+                data = json.loads(proc.stdout.strip())
+                response_text = data.get("response", "").strip()
+                new_conv_id = data.get("conversation_id", conversation_id)
+                usage = data.get("usage", {})
+                return {
+                    "success": True,
+                    "content": response_text or "(Keine Textausgabe)",
+                    "conversation_id": new_conv_id,
+                    "duration": f"{elapsed}s",
+                    "usage": usage,
+                    "metadata": {
+                        "agent": "Antigravity CLI",
+                        "conversation_id": new_conv_id,
+                        "duration": f"{elapsed}s",
+                        "tokens": usage.get("total_tokens", 0)
+                    }
+                }
+            except json.JSONDecodeError:
+                return {
+                    "success": True,
+                    "content": proc.stdout.strip(),
+                    "conversation_id": conversation_id,
+                    "duration": f"{elapsed}s",
+                    "metadata": {"agent": "Antigravity CLI", "duration": f"{elapsed}s"}
+                }
+        else:
+            err_msg = proc.stderr.strip() or proc.stdout.strip() or "Unbekannter Fehler bei der Ausführung"
+            return {
+                "success": False,
+                "content": f"> [!CAUTION]\n> **Antigravity CLI Fehler (Code {proc.returncode}):**\n\n```text\n{err_msg}\n```",
+                "conversation_id": conversation_id,
+                "duration": f"{elapsed}s",
+                "metadata": {"error": True, "code": proc.returncode}
+            }
+    except subprocess.TimeoutExpired:
+        return {
+            "success": False,
+            "content": "> [!CAUTION]\n> **Timeout:** Die KI-Antwort hat das Zeitlimit von 240 Sekunden überschritten.",
+            "conversation_id": conversation_id,
+            "duration": ">240s",
+            "metadata": {"timeout": True}
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "content": f"> [!CAUTION]\n> **Systemfehler beim Starten von `agy`:**\n\n```text\n{str(e)}\n```",
+            "conversation_id": conversation_id,
+            "duration": "0s",
+            "metadata": {"error": True}
         }
 
 class AntigravityHandler(BaseHTTPRequestHandler):
@@ -177,6 +264,7 @@ class AntigravityHandler(BaseHTTPRequestHandler):
                 cwd = current_state["cwd"]
                 model = current_state["model"]
                 agent_mode = current_state["agent_mode"]
+                conv_id = current_state.get("conversation_id")
                 uptime = round(time.time() - current_state["connected_since"])
 
             with get_db() as conn:
@@ -187,6 +275,7 @@ class AntigravityHandler(BaseHTTPRequestHandler):
                 "cwd": cwd,
                 "model": model,
                 "agent_mode": agent_mode,
+                "conversation_id": conv_id,
                 "uptime_seconds": uptime,
                 "total_messages": count,
                 "platform": "Termux / Linux (ARM64)" if "com.termux" in sys.executable else sys.platform,
@@ -371,7 +460,9 @@ class AntigravityHandler(BaseHTTPRequestHandler):
             with get_db() as conn:
                 conn.execute("DELETE FROM messages")
                 conn.commit()
-            return self.send_json_response({"success": True, "message": "History cleared"})
+            with state_lock:
+                current_state["conversation_id"] = None
+            return self.send_json_response({"success": True, "message": "History cleared and session reset"})
         else:
             self.send_error(404, "Not Found")
 
@@ -420,9 +511,11 @@ class AntigravityHandler(BaseHTTPRequestHandler):
 
     def process_agent_response(self, message, images):
         raw = message.strip()
-        cwd = current_state["cwd"]
+        with state_lock:
+            cwd = current_state["cwd"]
+            conv_id = current_state.get("conversation_id")
 
-        # Check for Slash Commands
+        # 1. Quick local Slash Commands
         if raw.startswith("/"):
             parts = raw.split(" ", 1)
             cmd = parts[0].lower()
@@ -431,21 +524,19 @@ class AntigravityHandler(BaseHTTPRequestHandler):
             if cmd == "/help":
                 return {
                     "content": (
-                        "### 🚀 Antigravity CLI Slash Commands\n\n"
-                        "Hier sind die verfügbaren Befehle im mobilen Dashboard:\n\n"
-                        "| Befehl | Beschreibung |\n"
+                        "### ⚡ Antigravity KI & Dashboard Hilfe\n\n"
+                        "Das Dashboard ist direkt mit der **Antigravity KI-Engine** (`agy`) verbunden.\n\n"
+                        "| Befehl / Eingabe | Beschreibung |\n"
                         "| :--- | :--- |\n"
-                        "| `/help` | Zeigt diese Hilfe-Übersicht an |\n"
-                        "| `/run <command>` oder `!<command>` | Führt einen Shell-Befehl direkt in Termux aus |\n"
-                        "| `/cd <pfad>` | Wechselt das aktive Arbeitsverzeichnis |\n"
+                        "| *Jeder Freitext-Prompt* | Wird direkt von der Antigravity KI (Gemini 3.7) beantwortet & ausgeführt |\n"
+                        "| `!<befehl>` oder `/run <cmd>` | Führt einen Shell-Befehl direkt in Termux aus |\n"
+                        "| `/cd <pfad>` | Wechselt das Arbeitsverzeichnis |\n"
                         "| `/pwd` | Zeigt den aktuellen Pfad an |\n"
                         "| `/ls` | Listet Dateien im aktuellen Pfad auf |\n"
                         "| `/status` | Zeigt System- & Dashboard-Statusdetails |\n"
-                        "| `/goal <ziel>` | Setzt ein autonomes Ziel mit iterativer Problemlösung |\n"
-                        "| `/plan <task>` | Erstellt einen mehrstufigen Implementierungsplan |\n"
-                        "| `/clear` | Leert den Chatverlauf |\n\n"
+                        "| `/clear` | Leert den Chatverlauf & startet neue KI-Session |\n\n"
                         "> [!TIP]\n"
-                        "> **Tipp:** Du kannst auch Bilder und Fotos anhängen, das Mikrofon für Push-to-Talk Spracheingabe nutzen oder Screenshots per Paste einfügen!"
+                        "> Du kannst jede Frage stellen (z. B. *\"Funktioniert es wieder?\"* oder *\"Schreibe ein Skript...\"*) und der KI-Agent antwortet und agiert eigenständig!"
                     ),
                     "metadata": {"type": "command_output", "cmd": "/help"}
                 }
@@ -456,14 +547,13 @@ class AntigravityHandler(BaseHTTPRequestHandler):
                 return {
                     "content": (
                         "### 📊 System- und Dashboard-Status\n\n"
+                        f"- **KI-Engine:** `Antigravity CLI Agent (Gemini 3.7)`\n"
                         f"- **Arbeitsverzeichnis (`cwd`):** `{cwd}`\n"
-                        f"- **Aktives Modell:** `Gemini 3.7 Flash`\n"
+                        f"- **Aktive Session ID:** `{conv_id or 'Neu / Noch nicht initialisiert'}`\n"
                         f"- **Betriebssystem:** Linux / Android Termux\n"
                         f"- **Dashboard-IPs:** {ip_list}\n"
                         f"- **Port:** `{PORT}`\n"
-                        f"- **Server-Uhrzeit:** `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`\n\n"
-                        "> [!NOTE]\n"
-                        "> Die Web Speech API und Foto-Uploads sind im Mobilbrowser voll aktiviert."
+                        f"- **Server-Uhrzeit:** `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`\n"
                     ),
                     "metadata": {"type": "status"}
                 }
@@ -510,34 +600,7 @@ class AntigravityHandler(BaseHTTPRequestHandler):
                     "metadata": {"action": "run", "success": res["success"], "code": res["returncode"]}
                 }
 
-            elif cmd == "/plan":
-                return {
-                    "content": (
-                        f"### 📋 Implementierungsplan: {arg or 'Aufgabe'}\n\n"
-                        "1. **Analyse & Kontext:** Prüfung der Umgebungsanforderungen und betroffenen Dateien in `{cwd}`.\n"
-                        "2. **Architektur-Entwurf:** Strukturierung der Module und Schnittstellen.\n"
-                        "3. **Schrittweise Umsetzung:** Durchführung der Änderungen mit Tests.\n"
-                        "4. **Validierung:** Ausführen der Testläufe und Verifikation im Dashboard.\n\n"
-                        "> [!TIP]\n"
-                        "> Bestätige mit `/goal` oder sende eine Anweisung, um sofort zu starten."
-                    ),
-                    "metadata": {"type": "plan"}
-                }
-
-            elif cmd == "/goal":
-                return {
-                    "content": (
-                        f"### 🎯 Autonomes Ziel aktiviert: {arg or 'Aufgabe'}\n\n"
-                        "> [!IMPORTANT]\n"
-                        "> Der Agent arbeitet autonom am Erreichen dieses Ziels und berichtet Zwischenschritte.\n\n"
-                        f"- **Fokus:** `{arg}`\n"
-                        f"- **Workspace:** `{cwd}`\n"
-                        f"- **Status:** Initialisiert & bereit für nächste Instruktionen."
-                    ),
-                    "metadata": {"type": "goal"}
-                }
-
-        # Direct shell command shorthand with '!'
+        # 2. Direct shell command shorthand with '!'
         if raw.startswith("!"):
             cmd_to_run = raw[1:].strip()
             res = execute_shell_command(cmd_to_run, cwd)
@@ -553,31 +616,26 @@ class AntigravityHandler(BaseHTTPRequestHandler):
                 "metadata": {"action": "exec", "success": res["success"]}
             }
 
-        # Handling Image-attached questions
-        image_context = ""
-        if images:
-            image_context = f"\n\n> [!NOTE]\n> *Empfangene Bilder:* {len(images)} Bild(er) angehängt zur visuellen Analyse."
+        # 3. Live AI Agent execution via Antigravity CLI
+        agent_res = execute_agy_agent(raw, cwd, conversation_id=conv_id, images=images)
+        if agent_res.get("conversation_id"):
+            with state_lock:
+                current_state["conversation_id"] = agent_res["conversation_id"]
 
-        # Smart assistant contextual responses
         return {
-            "content": (
-                f"Ich habe deine Nachricht erhalten:\n\n"
-                f"> {message}\n\n"
-                f"{image_context}\n\n"
-                f"**Verfügbare Aktionen in `{cwd}`:**\n"
-                f"- Shell-Befehl ausführen: `!<befehl>` oder `/run <befehl>`\n"
-                f"- Verzeichnis wechseln: `/cd <pfad>`\n"
-                f"- Dateien anzeigen: `/ls`\n"
-                f"- Hilfe aufrufen: `/help`\n\n"
-                f"Wie kann ich dich bei der Entwicklung oder Konfiguration unterstützen?"
-            ),
+            "content": agent_res["content"],
             "images": [],
-            "metadata": {"tokens": len(message.split()) * 2, "model": current_state["model"]}
+            "metadata": agent_res.get("metadata", {})
         }
+
+class AntigravityServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+    daemon_threads = True
 
 def run_server(port=PORT):
     server_address = ("0.0.0.0", port)
-    httpd = ThreadingHTTPServer(server_address, AntigravityHandler)
+    AntigravityServer.allow_reuse_address = True
+    httpd = AntigravityServer(server_address, AntigravityHandler)
     ips = get_local_ips()
     print(f"\n=======================================================")
     print(f"🚀 Antigravity Mobile Web Dashboard gestartet!")
