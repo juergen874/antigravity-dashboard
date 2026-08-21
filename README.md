@@ -78,3 +78,7 @@ Im Dashboard können sowohl Antigravity-Befehle als auch direkte Shell-Kommandos
 - `/goal <ziel>` – Startet ein autonomes Ziel
 - `/clear` – Leert den Chatverlauf und startet frische KI-Session
 - `/help` – Zeigt die Befehlsübersicht
+
+## 📄 Lizenz
+
+Dieses Projekt steht unter der [MIT License](LICENSE).
