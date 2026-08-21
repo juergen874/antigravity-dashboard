@@ -18,6 +18,7 @@ import urllib.parse
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from threading import Lock
 from datetime import datetime
+import code_analyzer
 
 PORT = int(os.environ.get("PORT", 8080))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -62,6 +63,18 @@ def init_db():
         conn.commit()
 
 init_db()
+
+def resolve_file_path(target_file, cwd):
+    expanded = os.path.expanduser(target_file)
+    if os.path.isabs(expanded):
+        return expanded
+    c1 = os.path.abspath(os.path.join(cwd, expanded))
+    if os.path.exists(c1):
+        return c1
+    c2 = os.path.abspath(os.path.join(BASE_DIR, expanded))
+    if os.path.exists(c2):
+        return c2
+    return c1
 
 def get_local_ips():
     ips = ["127.0.0.1"]
@@ -339,6 +352,47 @@ class AntigravityHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self.send_json_response({"error": str(e)}, status_code=500)
 
+        elif path == "/api/file/read":
+            query = urllib.parse.parse_qs(parsed.query)
+            target_file = query.get("path", [""])[0]
+            if not target_file:
+                return self.send_json_response({"error": "Path required"}, 400)
+            with state_lock:
+                cwd = current_state["cwd"]
+            expanded = resolve_file_path(target_file, cwd)
+            if not os.path.exists(expanded) or os.path.isdir(expanded):
+                return self.send_json_response({"error": f"Datei '{target_file}' nicht gefunden"}, 404)
+            try:
+                stat = os.stat(expanded)
+                with open(expanded, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read(1000000)
+                return self.send_json_response({
+                    "success": True,
+                    "filename": os.path.basename(expanded),
+                    "path": expanded,
+                    "size": stat.st_size,
+                    "is_py": expanded.endswith(".py"),
+                    "content": content
+                })
+            except Exception as e:
+                return self.send_json_response({"error": str(e)}, 500)
+
+        elif path == "/api/analyze":
+            query = urllib.parse.parse_qs(parsed.query)
+            target_file = query.get("path", [""])[0]
+            if not target_file:
+                return self.send_json_response({"error": "Path required"}, 400)
+            with state_lock:
+                cwd = current_state["cwd"]
+            expanded = resolve_file_path(target_file, cwd)
+            if not os.path.exists(expanded):
+                return self.send_json_response({"error": f"Datei '{target_file}' nicht gefunden"}, 404)
+            try:
+                res = code_analyzer.analyze_file(expanded)
+                return self.send_json_response(res)
+            except Exception as e:
+                return self.send_json_response({"success": False, "error": str(e)}, 500)
+
         elif path == "/api/stream":
             self.handle_sse()
             return
@@ -446,6 +500,29 @@ class AntigravityHandler(BaseHTTPRequestHandler):
                     "images": response_data.get("images", []),
                     "metadata": response_data.get("metadata", {}),
                     "created_at": datetime.now().isoformat()
+                })
+            except Exception as e:
+                return self.send_json_response({"error": str(e)}, 500)
+
+        elif path == "/api/file/save":
+            try:
+                data = json.loads(body_bytes.decode("utf-8"))
+                target = data.get("path", "").strip()
+                content = data.get("content", "")
+                if not target:
+                    return self.send_json_response({"error": "Path required"}, 400)
+                with state_lock:
+                    cwd = current_state["cwd"]
+                expanded = resolve_file_path(target, cwd)
+                os.makedirs(os.path.dirname(expanded), exist_ok=True)
+                with open(expanded, "w", encoding="utf-8") as f:
+                    f.write(content)
+                stat = os.stat(expanded)
+                return self.send_json_response({
+                    "success": True,
+                    "path": expanded,
+                    "size": stat.st_size,
+                    "message": f"Datei '{os.path.basename(expanded)}' erfolgreich gespeichert ({stat.st_size} Bytes)"
                 })
             except Exception as e:
                 return self.send_json_response({"error": str(e)}, 500)
@@ -583,6 +660,31 @@ class AntigravityHandler(BaseHTTPRequestHandler):
                     "content": f"### 📂 Dateiliste in `{cwd}`\n```bash\n{res['stdout'] or res['stderr']}\n```",
                     "metadata": {"action": "ls"}
                 }
+
+            elif cmd == "/analyze":
+                if not arg:
+                    return {"content": "> [!WARNING]\n> Bitte gib eine Python-Datei an: `/analyze <datei.py>`"}
+                expanded = resolve_file_path(arg, cwd)
+                if not os.path.exists(expanded):
+                    return {"content": f"> [!CAUTION]\n> Datei nicht gefunden: `{arg}`"}
+                res = code_analyzer.analyze_file(expanded)
+                if not res.get("success"):
+                    return {"content": f"> [!CAUTION]\n> **Analysefehler:** {res.get('error')}"}
+
+                stats = res.get("stats", {})
+                fn_list = "\n".join([f"- `def {f['name']}({', '.join(f['args'])})` (Zeile {f['lineno']})" for f in res.get("functions", [])]) or "_Keine Funktionen_"
+                cls_list = "\n".join([f"- `class {c['name']}` ({len(c['methods'])} Methoden, Zeile {c['lineno']})" for c in res.get("classes", [])]) or "_Keine Klassen_"
+                imp_list = ", ".join([f"`{i.get('module') or i.get('name')}`" for i in res.get("imports", [])]) or "_Keine_"
+
+                content = (
+                    f"### 🔬 Code-Analyse: `{res['filename']}`\n\n"
+                    f"**Statistik:** `{stats.get('total_lines')} Zeilen` (`{stats.get('code_lines')} Code`, `{stats.get('comment_lines')} Kommentare`)\n\n"
+                    f"#### 🌐 Imports ({stats.get('imports_count')}):\n{imp_list}\n\n"
+                    f"#### 📦 Klassen ({stats.get('classes_count')}):\n{cls_list}\n\n"
+                    f"#### ⚙️ Funktionen ({stats.get('functions_count')}):\n{fn_list}\n\n"
+                    f"#### 📊 Ablaufdiagramm:\n```mermaid\n{res.get('mermaid')}\n```"
+                )
+                return {"content": content, "metadata": {"type": "code_analysis", "file": res["filename"]}}
 
             elif cmd == "/run" or cmd.startswith("/exec"):
                 if not arg:

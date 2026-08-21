@@ -1231,6 +1231,209 @@ html, body {
   font-weight: 600;
 }
 
+/* ==========================================================================
+   FILE INSPECTOR & AST CODE ANALYZER MODAL
+   ========================================================================== */
+.modal-card-large {
+  max-width: 700px;
+  width: 95%;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.file-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.file-modal-icon {
+  font-size: 1.4rem;
+}
+
+.file-modal-sub {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  display: block;
+  max-width: 250px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal-tab-bar {
+  display: flex;
+  gap: 4px;
+  padding: 8px 16px 0 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+  overflow-x: auto;
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  padding: 8px 14px;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.tab-btn.active {
+  color: var(--accent-cyan);
+  border-bottom-color: var(--accent-cyan);
+  font-weight: 600;
+}
+
+.file-modal-body {
+  padding: 12px 16px 16px 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.tab-panel {
+  display: none;
+}
+
+.tab-panel.active {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.editor-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.small-btn {
+  padding: 5px 10px;
+  font-size: 0.75rem;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-focus);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.small-btn:hover {
+  background: rgba(0, 242, 254, 0.15);
+  border-color: var(--accent-cyan);
+}
+
+.small-btn.primary {
+  background: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
+  color: #050a14;
+  border: none;
+  font-weight: 600;
+}
+
+.code-editor-area {
+  width: 100%;
+  height: 380px;
+  background: #090d16;
+  border: 1px solid var(--border-focus);
+  border-radius: var(--radius-sm);
+  color: #e2e8f0;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  padding: 10px;
+  resize: vertical;
+  outline: none;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+  tab-size: 4;
+}
+
+.code-editor-area:focus {
+  border-color: var(--accent-cyan);
+  box-shadow: 0 0 0 2px rgba(0, 242, 254, 0.15);
+}
+
+.ast-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ast-section {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 12px;
+}
+
+.ast-section-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--accent-cyan);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ast-card {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  font-size: 0.8rem;
+}
+
+.ast-card-title {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: #a5f3fc;
+}
+
+.ast-card-doc {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  margin-top: 4px;
+}
+
+.ast-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 0.72rem;
+  background: rgba(79, 172, 254, 0.15);
+  color: #38bdf8;
+  margin: 2px;
+}
+
+.mermaid-box {
+  background: #06080c;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  color: #a5f3fc;
+  line-height: 1.5;
+}
+
 /* Helper Classes */
 .hidden { display: none !important; }
 
@@ -1244,4 +1447,5 @@ html, body {
   .features-grid { grid-template-columns: 1fr; }
   .path-pill { max-width: 105px; }
   .status-text { display: none; }
+  .file-modal-sub { max-width: 160px; }
 }

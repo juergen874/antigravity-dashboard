@@ -60,6 +60,25 @@
   const infoModalClose = document.getElementById('info-modal-close');
   const infoModalContent = document.getElementById('info-modal-content');
 
+  const fileModal = document.getElementById('file-modal');
+  const fileModalClose = document.getElementById('file-modal-close');
+  const fileModalTitle = document.getElementById('file-modal-title');
+  const fileModalPath = document.getElementById('file-modal-path');
+  const fileModalIcon = document.getElementById('file-modal-icon');
+  const fileSizeBadge = document.getElementById('file-size-badge');
+  const fileEditorTextarea = document.getElementById('file-editor-textarea');
+  const btnFileSave = document.getElementById('btn-file-save');
+  const btnFileRunPython = document.getElementById('btn-file-run-python');
+  const btnFileAskAi = document.getElementById('btn-file-ask-ai');
+  const astContent = document.getElementById('ast-content');
+  const flowContent = document.getElementById('flow-content');
+  const tabBtnCode = document.getElementById('tab-btn-code');
+  const tabBtnAst = document.getElementById('tab-btn-ast');
+  const tabBtnFlow = document.getElementById('tab-btn-flow');
+  const panelCode = document.getElementById('panel-code');
+  const panelAst = document.getElementById('panel-ast');
+  const panelFlow = document.getElementById('panel-flow');
+
   // Application State
   const state = {
     attachedImages: [], // Array of { url, filename, size }
@@ -784,12 +803,244 @@
         el.innerHTML = `<span>${icon} ${item.name}</span> <small style="color:var(--text-muted)">${item.size ? formatBytes(item.size) : ''}</small>`;
         if (item.is_dir) {
           el.addEventListener('click', () => loadFiles(item.path));
+        } else {
+          el.addEventListener('click', () => openFileModal(item.path));
         }
         fileBrowserList.appendChild(el);
       });
     } catch (err) {
       fileBrowserList.innerHTML = `<div style="color:var(--accent-red)">Fehler: ${err.message}</div>`;
     }
+  }
+
+  // =========================================================================
+  // FILE INSPECTOR & AST ANALYZER
+  // =========================================================================
+  let currentOpenFile = null;
+
+  async function openFileModal(filePath) {
+    currentOpenFile = filePath;
+    const filename = filePath.split('/').pop();
+    const isPy = filename.endsWith('.py');
+
+    fileModalTitle.textContent = filename;
+    fileModalPath.textContent = filePath;
+    fileModalIcon.textContent = isPy ? '🐍' : '📄';
+    fileSizeBadge.textContent = '...';
+    fileEditorTextarea.value = 'Lade Dateiinhalt...';
+
+    // Reset tabs
+    switchFileTab('code');
+    tabBtnAst.style.display = isPy ? 'block' : 'none';
+    tabBtnFlow.style.display = isPy ? 'block' : 'none';
+    btnFileRunPython.style.display = isPy ? 'inline-block' : 'none';
+
+    fileModal.classList.remove('hidden');
+
+    // 1. Load File Content
+    try {
+      const res = await fetch(`/api/file/read?path=${encodeURIComponent(filePath)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Fehler beim Lesen');
+      fileEditorTextarea.value = data.content;
+      fileSizeBadge.textContent = formatBytes(data.size);
+    } catch (err) {
+      fileEditorTextarea.value = `# Fehler beim Laden:\n# ${err.message}`;
+    }
+
+    // 2. Load AST Analysis if Python
+    if (isPy) {
+      astContent.innerHTML = '<div class="loading-spinner">Analysiere Python AST...</div>';
+      flowContent.innerHTML = '<div class="loading-spinner">Erstelle Ablaufdiagramm...</div>';
+      try {
+        const res = await fetch(`/api/analyze?path=${encodeURIComponent(filePath)}`);
+        const data = await res.json();
+        if (data.success) {
+          renderAstAnalysis(data);
+          renderMermaidFlow(data.mermaid);
+        } else {
+          astContent.innerHTML = `<div style="color:var(--accent-red); padding:10px;">Analysefehler: ${data.error || 'Unbekannt'}</div>`;
+          flowContent.innerHTML = `<div style="color:var(--accent-red); padding:10px;">Diagramm konnte nicht erstellt werden.</div>`;
+        }
+      } catch (err) {
+        astContent.innerHTML = `<div style="color:var(--accent-red); padding:10px;">Fehler: ${err.message}</div>`;
+        flowContent.innerHTML = `<div style="color:var(--accent-red); padding:10px;">Fehler: ${err.message}</div>`;
+      }
+    }
+  }
+
+  function switchFileTab(tabName) {
+    [tabBtnCode, tabBtnAst, tabBtnFlow].forEach(btn => btn.classList.remove('active'));
+    [panelCode, panelAst, panelFlow].forEach(p => p.classList.remove('active'));
+
+    if (tabName === 'code') {
+      tabBtnCode.classList.add('active');
+      panelCode.classList.add('active');
+    } else if (tabName === 'ast') {
+      tabBtnAst.classList.add('active');
+      panelAst.classList.add('active');
+    } else if (tabName === 'flow') {
+      tabBtnFlow.classList.add('active');
+      panelFlow.classList.add('active');
+    }
+  }
+
+  function renderAstAnalysis(data) {
+    const stats = data.stats || {};
+    const imports = data.imports || [];
+    const classes = data.classes || [];
+    const functions = data.functions || [];
+
+    let html = `
+      <div class="ast-section">
+        <div class="ast-section-title">📊 Datei-Metriken</div>
+        <div style="display:flex; gap:6px; flex-wrap:wrap;">
+          <span class="ast-pill">Gesamt: ${stats.total_lines || 0} Zeilen</span>
+          <span class="ast-pill">Code: ${stats.code_lines || 0} Zeilen</span>
+          <span class="ast-pill">Kommentare: ${stats.comment_lines || 0}</span>
+          <span class="ast-pill">Funktionen: ${stats.functions_count || 0}</span>
+          <span class="ast-pill">Klassen: ${stats.classes_count || 0}</span>
+        </div>
+      </div>
+    `;
+
+    if (imports.length > 0) {
+      html += `
+        <div class="ast-section">
+          <div class="ast-section-title">🌐 Importierte Module (${imports.length})</div>
+          <div style="display:flex; gap:4px; flex-wrap:wrap;">
+            ${imports.map(i => `<span class="ast-pill" style="background:rgba(192, 132, 252, 0.15); color:#c084fc;">${i.module ? (i.module + '.' + (i.name || '')) : (i.module || i.name)}</span>`).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    if (classes.length > 0) {
+      html += `
+        <div class="ast-section">
+          <div class="ast-section-title">📦 Klassen (${classes.length})</div>
+          ${classes.map(c => `
+            <div class="ast-card">
+              <div class="ast-card-title">class ${c.name}${c.bases.length ? `(${c.bases.join(', ')})` : ''} <small style="color:var(--text-muted); float:right;">Zeile ${c.lineno}</small></div>
+              ${c.docstring ? `<div class="ast-card-doc">"${c.docstring}"</div>` : ''}
+              <div style="margin-top:6px; font-size:0.75rem; color:var(--text-secondary);">
+                Methoden: ${c.methods.map(m => `<code>${m.name}()</code>`).join(', ') || 'Keine'}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    if (functions.length > 0) {
+      html += `
+        <div class="ast-section">
+          <div class="ast-section-title">⚙️ Funktionen & Methoden (${functions.length})</div>
+          ${functions.map(f => `
+            <div class="ast-card">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="ast-card-title">${f.is_async ? 'async ' : ''}def ${f.name}(${f.args.join(', ')})</span>
+                <button class="small-btn btn-explain-func" data-func="${f.name}" style="padding:2px 8px; font-size:0.7rem;">⚡ Erklären</button>
+              </div>
+              ${f.docstring ? `<div class="ast-card-doc">"${f.docstring}"</div>` : '<div class="ast-card-doc" style="font-style:italic; color:var(--text-muted);">Kein Docstring</div>'}
+              <div style="margin-top:4px; font-size:0.72rem; color:var(--text-muted);">
+                Zeilen: ${f.lineno} - ${f.end_lineno}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    astContent.innerHTML = html;
+
+    // Attach explain button handlers
+    astContent.querySelectorAll('.btn-explain-func').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const funcName = e.target.getAttribute('data-func');
+        const filename = currentOpenFile.split('/').pop();
+        fileModal.classList.add('hidden');
+        pathModal.classList.add('hidden');
+        chatInput.value = `Erkläre mir die Funktion \`${funcName}()\` in der Datei \`${filename}\` und wofür sie verwendet wird.`;
+        adjustTextareaHeight();
+        sendMessage();
+      });
+    });
+  }
+
+  function renderMermaidFlow(mermaidCode) {
+    if (!mermaidCode) {
+      flowContent.innerHTML = '<div style="color:var(--text-muted)">Kein Ablaufdiagramm verfügbar.</div>';
+      return;
+    }
+    flowContent.innerHTML = `
+      <div class="ast-section">
+        <div class="ast-section-title">📊 Visueller Funktions-Aufrufgraph</div>
+        <div class="mermaid-box">${escapeHtml(mermaidCode)}</div>
+        <div style="margin-top:8px;">
+          <button class="small-btn primary" id="btn-flow-ask-ai">⚡ Diagramm im Chat visualisieren & erklären</button>
+        </div>
+      </div>
+    `;
+
+    const btnFlowAsk = document.getElementById('btn-flow-ask-ai');
+    if (btnFlowAsk) {
+      btnFlowAsk.addEventListener('click', () => {
+        const filename = currentOpenFile.split('/').pop();
+        fileModal.classList.add('hidden');
+        pathModal.classList.add('hidden');
+        chatInput.value = `/analyze ${currentOpenFile}`;
+        adjustTextareaHeight();
+        sendMessage();
+      });
+    }
+  }
+
+  async function saveCurrentFile() {
+    if (!currentOpenFile) return;
+    btnFileSave.textContent = '⏳...';
+    btnFileSave.disabled = true;
+    try {
+      const res = await fetch('/api/file/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: currentOpenFile,
+          content: fileEditorTextarea.value
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Fehler beim Speichern');
+      btnFileSave.textContent = '✅ Gespeichert!';
+      setTimeout(() => {
+        btnFileSave.textContent = '💾 Speichern';
+        btnFileSave.disabled = false;
+      }, 1500);
+    } catch (err) {
+      alert('Fehler beim Speichern: ' + err.message);
+      btnFileSave.textContent = '💾 Speichern';
+      btnFileSave.disabled = false;
+    }
+  }
+
+  function runCurrentFilePython() {
+    if (!currentOpenFile) return;
+    const filename = currentOpenFile.split('/').pop();
+    fileModal.classList.add('hidden');
+    pathModal.classList.add('hidden');
+    chatInput.value = `!python3 ${currentOpenFile}`;
+    adjustTextareaHeight();
+    sendMessage();
+  }
+
+  function askAiAboutCurrentFile() {
+    if (!currentOpenFile) return;
+    const filename = currentOpenFile.split('/').pop();
+    fileModal.classList.add('hidden');
+    pathModal.classList.add('hidden');
+    chatInput.value = `Erkläre mir die Datei \`${filename}\` (${currentOpenFile}) und wie ihre Funktionen zusammenarbeiten.`;
+    adjustTextareaHeight();
+    sendMessage();
   }
 
   function renderBreadcrumb(fullPath) {
@@ -951,6 +1202,15 @@
       btnTheme.querySelector('.btn-icon').textContent = isSlate ? '☀️' : '🌙';
     });
 
+    // File Inspector Modal & Tabs
+    fileModalClose.addEventListener('click', () => fileModal.classList.add('hidden'));
+    tabBtnCode.addEventListener('click', () => switchFileTab('code'));
+    tabBtnAst.addEventListener('click', () => switchFileTab('ast'));
+    tabBtnFlow.addEventListener('click', () => switchFileTab('flow'));
+    btnFileSave.addEventListener('click', saveCurrentFile);
+    btnFileRunPython.addEventListener('click', runCurrentFilePython);
+    btnFileAskAi.addEventListener('click', askAiAboutCurrentFile);
+
     // Lightbox Close
     lightboxClose.addEventListener('click', closeLightbox);
     lightboxBackdrop.addEventListener('click', closeLightbox);
@@ -959,6 +1219,7 @@
         closeLightbox();
         pathModal.classList.add('hidden');
         infoModal.classList.add('hidden');
+        fileModal.classList.add('hidden');
         voiceOverlay.classList.add('hidden');
       }
     });

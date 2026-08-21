@@ -22,9 +22,16 @@ Ein extrem leichtgewichtiges, modernes und mobiles Web-Dashboard für die **Anti
 - **Bildvorschau & Vollbild-Lightbox:**
   - Thumbnails für hochgeladene und empfangene Bilder.
   - Antippen öffnet eine Lightbox mit Zoom, Download und Schließen.
-- **Schnellbefehle-Leiste:** Schnellauswahl für `/help`, `/goal`, `/plan`, `!ls`, `/status`, `!git status`, `/clear`.
+- **Schnellbefehle-Leiste:** Schnellauswahl für `/help`, `/analyze`, `/goal`, `/plan`, `!ls`, `/status`, `!git status`, `/clear`.
 
-### 3. ⌨️ Mobile Eingabeleiste unten
+### 3. 🔬 Visueller Code-Explorer & AST-Analyzer
+- **Datei-Inspector Modal:** Tippe auf eine Datei im Verzeichnis-Browser, um den Inspector zu öffnen:
+  - 📝 **Code & Editor:** Text- und Python-Dateien direkt im Smartphone-Browser ansehen, editieren und mit `💾 Speichern` sichern.
+  - 🔬 **AST Funktions-Map:** Analysiert Python-Skripte lokal über `ast` in Module, Klassen, Methoden und Funktionen mit Argumenten & Docstrings. Jede Funktion hat einen `⚡ Erklären`-Button, der die Erklärung direkt im Chat anfordert.
+  - 📊 **Ablaufdiagramm (Mermaid):** Visualisiert den Aufruf-Graph (wer ruft wen auf) automatisch als Flussdiagramm.
+  - 🚀 **1-Klick Ausführung:** Mit `🚀 Ausführen` (`!python3 <datei>`) direkt im Dashboard testen.
+
+### 4. ⌨️ Mobile Eingabeleiste unten
 - **Multi-Line Textarea:** Passt sich beim Tippen automatisch der Höhe an (1 bis 6 Zeilen) und schrumpft nach dem Senden.
 - **🎙️ Push-to-Talk Mikrofon-Button (Web Speech API):**
   - **Push-to-Talk:** Gedrückt halten zum Sprechen, Loslassen fügt den Text ein.
@@ -62,11 +69,12 @@ python3 ~/antigravity-dashboard/server.py 8080
 ## 🛠️ Slash Commands & Shell Bridge
 
 Im Dashboard können sowohl Antigravity-Befehle als auch direkte Shell-Kommandos eingegeben werden:
+- `/analyze <datei.py>` – Analysiert ein Python-Skript grafisch (Klassen, Funktionen, Docstrings & Ablaufdiagramm)
 - `!<befehl>` oder `/run <befehl>` – Führt einen Shell-Befehl in Termux im aktuellen Pfad aus (z. B. `!python3 main.py` oder `!git status`)
 - `/cd <pfad>` – Wechselt das Arbeitsverzeichnis
 - `/ls` – Listet Dateien im aktuellen Pfad auf
 - `/status` – Zeigt Systemstatus und Dashboard-Verbindungsdaten
 - `/plan <aufgabe>` – Erstellt einen Implementierungsplan
 - `/goal <ziel>` – Startet ein autonomes Ziel
-- `/clear` – Leert den Chatverlauf
+- `/clear` – Leert den Chatverlauf und startet frische KI-Session
 - `/help` – Zeigt die Befehlsübersicht

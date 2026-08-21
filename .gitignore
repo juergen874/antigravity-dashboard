@@ -11,7 +11,11 @@ venv/
 # SQLite & Runtime data
 *.db
 *.sqlite3
+*.log
+*.pid
 data/*.db
+data/*.log
+data/*.pid
 !data/.gitkeep
 
 # Uploads

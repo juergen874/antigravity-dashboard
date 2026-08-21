@@ -53,6 +53,7 @@
     <!-- QUICK SLASH COMMANDS STRIP (Mobile scrollable) -->
     <nav class="quick-commands-bar" aria-label="Schnellbefehle">
       <button class="cmd-chip" data-cmd="/help">📖 /help</button>
+      <button class="cmd-chip" data-cmd="/analyze server.py">🔬 /analyze</button>
       <button class="cmd-chip" data-cmd="/goal ">🎯 /goal</button>
       <button class="cmd-chip" data-cmd="/plan ">📋 /plan</button>
       <button class="cmd-chip" data-cmd="!ls">⚡ !ls</button>
@@ -240,6 +241,58 @@
       </div>
       <div class="modal-body" id="info-modal-content">
         <div class="loading-spinner">Lade Systemstatus...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FILE INSPECTOR & AST CODE ANALYZER MODAL -->
+  <div class="modal-backdrop hidden" id="file-modal">
+    <div class="modal-card modal-card-large">
+      <div class="modal-header">
+        <div class="file-modal-title">
+          <span class="file-modal-icon" id="file-modal-icon">📄</span>
+          <div>
+            <h3 id="file-modal-title">Datei-Inspector</h3>
+            <span class="file-modal-sub" id="file-modal-path">~/script.py</span>
+          </div>
+        </div>
+        <button class="modal-close-btn" id="file-modal-close">✕</button>
+      </div>
+
+      <!-- File Modal Tabs -->
+      <div class="modal-tab-bar">
+        <button class="tab-btn active" id="tab-btn-code" data-tab="code">📝 Code / Editor</button>
+        <button class="tab-btn" id="tab-btn-ast" data-tab="ast">🔬 AST-Analyse</button>
+        <button class="tab-btn" id="tab-btn-flow" data-tab="flow">📊 Ablaufdiagramm</button>
+      </div>
+
+      <div class="modal-body file-modal-body">
+        <!-- Tab 1: Code / Editor -->
+        <div class="tab-panel active" id="panel-code">
+          <div class="editor-toolbar">
+            <span class="badge" id="file-size-badge">0 KB</span>
+            <div class="editor-actions">
+              <button class="small-btn" id="btn-file-ask-ai" title="KI nach dieser Datei fragen">⚡ In Chat fragen</button>
+              <button class="small-btn" id="btn-file-run-python" title="Mit Python ausführen">🚀 Ausführen</button>
+              <button class="small-btn primary" id="btn-file-save">💾 Speichern</button>
+            </div>
+          </div>
+          <textarea id="file-editor-textarea" class="code-editor-area" spellcheck="false"></textarea>
+        </div>
+
+        <!-- Tab 2: AST Analysis -->
+        <div class="tab-panel" id="panel-ast">
+          <div id="ast-content" class="ast-content">
+            <div class="loading-spinner">Lade AST-Code-Analyse...</div>
+          </div>
+        </div>
+
+        <!-- Tab 3: Mermaid Flow -->
+        <div class="tab-panel" id="panel-flow">
+          <div id="flow-content" class="flow-content">
+            <div class="loading-spinner">Generiere Strukturdiagramm...</div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
