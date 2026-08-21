@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0d1117">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Antigravity">
+  <title>Antigravity CLI • Mobile Web Dashboard</title>
+  
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
+</head>
+<body>
+  <div id="app" class="app-container">
+    
+    <!-- TOP STATUS BAR -->
+    <header class="status-bar">
+      <div class="status-left">
+        <div class="brand">
+          <span class="brand-icon">⚡</span>
+          <span class="brand-title">Antigravity</span>
+          <span class="badge model-badge" id="model-badge">Gemini 3.7</span>
+        </div>
+        <div class="connection-indicator online" id="connection-status" title="Server Status">
+          <span class="status-dot"></span>
+          <span class="status-text" id="status-label">Online</span>
+          <span class="ping-badge" id="ping-badge">12ms</span>
+        </div>
+      </div>
+
+      <div class="status-right">
+        <!-- Active Path Pill -->
+        <button class="path-pill" id="btn-open-path-modal" title="Arbeitsverzeichnis wechseln">
+          <span class="path-icon">📁</span>
+          <span class="path-text" id="current-path-label">~</span>
+        </button>
+
+        <!-- Quick Top Actions -->
+        <button class="icon-btn" id="btn-theme" title="Theme umschalten" aria-label="Theme">
+          <span class="btn-icon">🌙</span>
+        </button>
+        <button class="icon-btn" id="btn-info" title="Systeminfo" aria-label="Info">
+          <span class="btn-icon">ℹ️</span>
+        </button>
+        <button class="icon-btn danger" id="btn-clear-chat" title="Chat leeren" aria-label="Clear">
+          <span class="btn-icon">🗑️</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- QUICK SLASH COMMANDS STRIP (Mobile scrollable) -->
+    <nav class="quick-commands-bar" aria-label="Schnellbefehle">
+      <button class="cmd-chip" data-cmd="/help">📖 /help</button>
+      <button class="cmd-chip" data-cmd="/goal ">🎯 /goal</button>
+      <button class="cmd-chip" data-cmd="/plan ">📋 /plan</button>
+      <button class="cmd-chip" data-cmd="!ls">⚡ !ls</button>
+      <button class="cmd-chip" data-cmd="/status">📊 /status</button>
+      <button class="cmd-chip" data-cmd="!git status">🐙 !git status</button>
+      <button class="cmd-chip" data-cmd="/clear">🧹 /clear</button>
+    </nav>
+
+    <!-- MAIN CHAT STREAM -->
+    <main class="chat-container" id="chat-container">
+      <div class="welcome-card" id="welcome-card">
+        <div class="welcome-icon">⚡</div>
+        <h2>Antigravity CLI Dashboard</h2>
+        <p>Leichtgewichtiges mobiles Interface für Termux & Linux CLI Pair-Programming.</p>
+        <div class="features-grid">
+          <div class="feature-item">
+            <span class="feat-icon">🎙️</span>
+            <div>
+              <strong>Web Speech API</strong>
+              <span>Push-to-Talk & Spracheingabe</span>
+            </div>
+          </div>
+          <div class="feature-item">
+            <span class="feat-icon">📸</span>
+            <div>
+              <strong>Kamera & Upload</strong>
+              <span>Direktes Fotografieren & Galerie</span>
+            </div>
+          </div>
+          <div class="feature-item">
+            <span class="feat-icon">📋</span>
+            <div>
+              <strong>Zwischenablage</strong>
+              <span>Paste für Screenshots & Code</span>
+            </div>
+          </div>
+          <div class="feature-item">
+            <span class="feat-icon">⚡</span>
+            <div>
+              <strong>Shell Bridge</strong>
+              <span>Termux-Befehle via <code>!cmd</code></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Messages Stream List -->
+      <div class="messages-list" id="messages-list"></div>
+      
+      <!-- Typing / Processing Indicator -->
+      <div class="typing-indicator hidden" id="typing-indicator">
+        <div class="agent-avatar">⚡</div>
+        <div class="typing-bubble">
+          <span class="dot"></span>
+          <span class="dot"></span>
+          <span class="dot"></span>
+          <span class="typing-text">Antigravity denkt nach...</span>
+        </div>
+      </div>
+      
+      <div id="chat-bottom-anchor"></div>
+    </main>
+
+    <!-- FLOATING SCROLL-TO-BOTTOM BUTTON -->
+    <button class="scroll-bottom-btn hidden" id="scroll-bottom-btn" title="Nach unten scrollen">
+      ⬇️
+    </button>
+
+    <!-- VOICE RECORDING OVERLAY (Pulsing waveform) -->
+    <div class="voice-overlay hidden" id="voice-overlay">
+      <div class="voice-card">
+        <div class="mic-wave-container">
+          <div class="wave-ring ring-1"></div>
+          <div class="wave-ring ring-2"></div>
+          <div class="wave-ring ring-3"></div>
+          <div class="mic-pulsing-icon">🎙️</div>
+        </div>
+        <div class="voice-title" id="voice-status-title">Ich höre zu...</div>
+        <div class="voice-interim" id="voice-interim-text">Sprich jetzt...</div>
+        <div class="voice-controls">
+          <select id="voice-lang-select" class="voice-lang-select">
+            <option value="de-DE" selected>🇩🇪 Deutsch</option>
+            <option value="en-US">🇺🇸 English</option>
+          </select>
+          <button class="voice-stop-btn" id="voice-cancel-btn">Abbrechen</button>
+          <button class="voice-done-btn" id="voice-done-btn">Fertig ✓</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- BOTTOM INPUT BAR -->
+    <footer class="bottom-input-bar">
+      <!-- Attached Image Thumbnails Strip -->
+      <div class="attachment-preview-strip hidden" id="attachment-strip"></div>
+
+      <div class="input-row">
+        <!-- Hidden file inputs -->
+        <input type="file" id="camera-input" accept="image/*" capture="environment" class="hidden-input">
+        <input type="file" id="gallery-input" accept="image/*" multiple class="hidden-input">
+
+        <!-- Mobile Camera Snapper Button -->
+        <button class="tool-btn" id="btn-camera" title="Foto mit Kamera aufnehmen" aria-label="Kamera">
+          <span class="btn-icon">📷</span>
+        </button>
+
+        <!-- Photo / Gallery Upload Button -->
+        <button class="tool-btn" id="btn-gallery" title="Bild aus Galerie / Datei hochladen" aria-label="Galerie">
+          <span class="btn-icon">🖼️</span>
+        </button>
+
+        <!-- Push-to-Talk Microphone Button -->
+        <button class="tool-btn mic-btn" id="btn-mic" title="Push-to-Talk: Halten oder Tippen zum Sprechen" aria-label="Mikrofon">
+          <span class="btn-icon">🎙️</span>
+        </button>
+
+        <!-- Expanding Multi-Line Textarea -->
+        <div class="textarea-wrapper">
+          <textarea 
+            id="chat-input" 
+            placeholder="Nachricht oder /befehl eingeben... (Paste für Bilder)" 
+            rows="1"
+            autocomplete="off"
+            autocorrect="on"
+            spellcheck="false"
+          ></textarea>
+        </div>
+
+        <!-- Send Button -->
+        <button class="send-btn" id="btn-send" title="Senden (Enter)" aria-label="Senden">
+          <span class="send-icon">➤</span>
+        </button>
+      </div>
+
+      <!-- Paste Hint on Mobile & Desktop -->
+      <div class="input-footer-hint">
+        <span>💡 Zwischenablage-Bilder können direkt eingefügt werden</span>
+      </div>
+    </footer>
+
+  </div>
+
+  <!-- LIGHTBOX / FULLSCREEN IMAGE MODAL -->
+  <div class="lightbox-modal hidden" id="lightbox-modal">
+    <div class="lightbox-backdrop" id="lightbox-backdrop"></div>
+    <div class="lightbox-content">
+      <div class="lightbox-toolbar">
+        <span class="lightbox-filename" id="lightbox-filename">Bildvorschau</span>
+        <div class="lightbox-actions">
+          <a class="lightbox-btn" id="lightbox-download" download="image.jpg" title="Herunterladen">💾</a>
+          <button class="lightbox-btn" id="lightbox-close" title="Schließen">✕</button>
+        </div>
+      </div>
+      <div class="lightbox-img-wrapper">
+        <img src="" alt="Vorschau" id="lightbox-img">
+      </div>
+    </div>
+  </div>
+
+  <!-- DIRECTORY BROWSER MODAL -->
+  <div class="modal-backdrop hidden" id="path-modal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>📁 Arbeitsverzeichnis wechseln</h3>
+        <button class="modal-close-btn" id="path-modal-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="path-input-group">
+          <input type="text" id="manual-path-input" placeholder="/data/data/com.termux/files/home">
+          <button class="primary-btn" id="btn-apply-path">Wechseln</button>
+        </div>
+        <div class="path-breadcrumb" id="path-breadcrumb"></div>
+        <div class="file-browser-list" id="file-browser-list">
+          <div class="loading-spinner">Lade Ordnerstruktur...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SYSTEM INFO MODAL -->
+  <div class="modal-backdrop hidden" id="info-modal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>📊 Antigravity Systeminfo</h3>
+        <button class="modal-close-btn" id="info-modal-close">✕</button>
+      </div>
+      <div class="modal-body" id="info-modal-content">
+        <div class="loading-spinner">Lade Systemstatus...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SCRIPTS -->
+  <script src="/static/app.js"></script>
+</body>
+</html>
