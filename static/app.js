@@ -414,13 +414,15 @@
   }
 
   function escapeHTML(str) {
-    return str
+    if (!str) return '';
+    return String(str)
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
   }
+  const escapeHtml = escapeHTML;
 
   function attachCodeBlockHandlers(container) {
     container.querySelectorAll('.copy-code-btn').forEach(btn => {
@@ -796,11 +798,62 @@
         fileBrowserList.appendChild(parentItem);
       }
 
+      if (data.items.length === 0) {
+        const emptyItem = document.createElement('div');
+        emptyItem.style.padding = '12px';
+        emptyItem.style.color = 'var(--text-muted)';
+        emptyItem.style.fontStyle = 'italic';
+        emptyItem.style.textAlign = 'center';
+        emptyItem.textContent = '(Ordner ist leer)';
+        fileBrowserList.appendChild(emptyItem);
+      }
+
       data.items.forEach(item => {
         const el = document.createElement('div');
         el.className = `file-item ${item.is_dir ? 'is-dir' : 'is-file'}`;
-        const icon = item.is_dir ? '📁' : '📄';
-        el.innerHTML = `<span>${icon} ${item.name}</span> <small style="color:var(--text-muted)">${item.size ? formatBytes(item.size) : ''}</small>`;
+        
+        let icon = '📄';
+        if (item.is_dir) {
+          icon = '📁';
+        } else if (item.name.endsWith('.py')) {
+          icon = '🐍';
+        } else if (item.name.endsWith('.pdf')) {
+          icon = '📕';
+        } else if (item.name.endsWith('.apk')) {
+          icon = '🤖';
+        } else if (/\.(png|jpe?g|gif|webp|svg)$/i.test(item.name)) {
+          icon = '🖼️';
+        } else if (/\.(tar\.gz|zip|gz|rar|7z)$/i.test(item.name)) {
+          icon = '📦';
+        }
+
+        const titleSpan = document.createElement('span');
+        titleSpan.innerHTML = `${icon} ${escapeHTML(item.name)}`;
+        el.appendChild(titleSpan);
+
+        const actionsWrap = document.createElement('div');
+        actionsWrap.className = 'file-item-actions';
+
+        if (item.size) {
+          const sizeEl = document.createElement('small');
+          sizeEl.style.color = 'var(--text-muted)';
+          sizeEl.textContent = formatBytes(item.size);
+          actionsWrap.appendChild(sizeEl);
+        }
+
+        if (!item.is_dir) {
+          const dlBtn = document.createElement('a');
+          dlBtn.className = 'file-dl-btn';
+          dlBtn.href = `/api/file/download?path=${encodeURIComponent(item.path)}`;
+          dlBtn.title = 'Datei auf Smartphone/PC herunterladen';
+          dlBtn.textContent = '💾';
+          dlBtn.setAttribute('download', item.name);
+          dlBtn.addEventListener('click', (e) => e.stopPropagation());
+          actionsWrap.appendChild(dlBtn);
+        }
+
+        el.appendChild(actionsWrap);
+
         if (item.is_dir) {
           el.addEventListener('click', () => loadFiles(item.path));
         } else {
@@ -817,17 +870,33 @@
   // FILE INSPECTOR & AST ANALYZER
   // =========================================================================
   let currentOpenFile = null;
+  const btnFileDownload = document.getElementById('btn-file-download');
 
   async function openFileModal(filePath) {
     currentOpenFile = filePath;
     const filename = filePath.split('/').pop();
     const isPy = filename.endsWith('.py');
+    const isImage = /\.(png|jpe?g|gif|webp|svg)$/i.test(filename);
+    const isBinaryDoc = /\.(pdf|apk|tar\.gz|zip|gz|rar|7z|bin|so|whl)$/i.test(filename);
 
     fileModalTitle.textContent = filename;
     fileModalPath.textContent = filePath;
-    fileModalIcon.textContent = isPy ? '🐍' : '📄';
+    
+    let icon = '📄';
+    if (isPy) icon = '🐍';
+    else if (isImage) icon = '🖼️';
+    else if (filename.endsWith('.pdf')) icon = '📕';
+    else if (filename.endsWith('.apk')) icon = '🤖';
+    else if (/\.(tar\.gz|zip|gz)$/i.test(filename)) icon = '📦';
+    fileModalIcon.textContent = icon;
+
     fileSizeBadge.textContent = '...';
     fileEditorTextarea.value = 'Lade Dateiinhalt...';
+
+    if (btnFileDownload) {
+      btnFileDownload.href = `/api/file/download?path=${encodeURIComponent(filePath)}`;
+      btnFileDownload.setAttribute('download', filename);
+    }
 
     // Reset tabs
     switchFileTab('code');
@@ -837,7 +906,20 @@
 
     fileModal.classList.remove('hidden');
 
-    // 1. Load File Content
+    // Handle images and binary files gracefully
+    if (isImage) {
+      fileEditorTextarea.value = `[Bilddatei: ${filename}]\n\nKlicke oben auf '💾 Download' oder öffne das Bild über das Dashboard.`;
+      fileSizeBadge.textContent = 'Bild';
+      return;
+    }
+
+    if (isBinaryDoc) {
+      fileEditorTextarea.value = `📕 Dokument / Binärdatei: ${filename}\nPfad: ${filePath}\n\nDiese Datei ist ein Binärformat (z.B. PDF, APK oder Archiv) und kann nicht als Plain Text bearbeitet werden.\n\n💡 Tipp: Klicke oben auf die Schaltfläche '💾 Download', um die Datei direkt auf dein Smartphone oder deinen Computer herunterzuladen.`;
+      fileSizeBadge.textContent = filename.split('.').pop().toUpperCase();
+      return;
+    }
+
+    // 1. Load File Content for text files
     try {
       const res = await fetch(`/api/file/read?path=${encodeURIComponent(filePath)}`);
       const data = await res.json();
@@ -976,7 +1058,7 @@
     flowContent.innerHTML = `
       <div class="ast-section">
         <div class="ast-section-title">📊 Visueller Funktions-Aufrufgraph</div>
-        <div class="mermaid-box">${escapeHtml(mermaidCode)}</div>
+        <div class="mermaid-box">${escapeHTML(mermaidCode)}</div>
         <div style="margin-top:8px;">
           <button class="small-btn primary" id="btn-flow-ask-ai">⚡ Diagramm im Chat visualisieren & erklären</button>
         </div>
@@ -1165,11 +1247,46 @@
         chatInput.value = cmd;
         adjustTextareaHeight();
         chatInput.focus();
-        if (cmd === '/status' || cmd === '/help' || cmd === '!ls' || cmd === '/clear') {
+        if (cmd === '/status' || cmd === '/help' || cmd === '!ls' || cmd === '/clear' || cmd === '/storage downloads' || cmd === '/setup-storage') {
           sendMessage();
         }
       });
     });
+
+    // Quick Storage Shortcut Chips in Directory Modal
+    document.querySelectorAll('.storage-chip[data-path]').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const targetPath = chip.getAttribute('data-path');
+        loadFiles(targetPath);
+      });
+    });
+
+    // Termux Setup Storage Trigger in Directory Modal
+    const btnSetupStorage = document.getElementById('btn-setup-storage');
+    if (btnSetupStorage) {
+      btnSetupStorage.addEventListener('click', async () => {
+        btnSetupStorage.disabled = true;
+        btnSetupStorage.innerHTML = '<span class="chip-icon">⏳</span> Einrichten...';
+        try {
+          const res = await fetch('/api/setup-storage', { method: 'POST' });
+          const data = await res.json();
+          btnSetupStorage.innerHTML = '<span class="chip-icon">✅</span> Bereit!';
+          if (data.status && data.status.has_downloads) {
+            loadFiles('~/storage/downloads');
+          } else {
+            loadFiles('~/storage');
+          }
+          alert(data.message || 'Termux Storage wurde erfolgreich eingerichtet!');
+        } catch (err) {
+          alert('Fehler beim Storage Setup: ' + err.message);
+        } finally {
+          setTimeout(() => {
+            btnSetupStorage.disabled = false;
+            btnSetupStorage.innerHTML = '<span class="chip-icon">⚡</span> Setup Storage';
+          }, 2000);
+        }
+      });
+    }
 
     // Image Uploads
     setupImageUploads();

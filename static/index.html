@@ -53,6 +53,8 @@
     <!-- QUICK SLASH COMMANDS STRIP (Mobile scrollable) -->
     <nav class="quick-commands-bar" aria-label="Schnellbefehle">
       <button class="cmd-chip" data-cmd="/help">📖 /help</button>
+      <button class="cmd-chip" data-cmd="/storage downloads">📥 Downloads</button>
+      <button class="cmd-chip" data-cmd="/setup-storage">📱 Setup Storage</button>
       <button class="cmd-chip" data-cmd="/analyze server.py">🔬 /analyze</button>
       <button class="cmd-chip" data-cmd="/goal ">🎯 /goal</button>
       <button class="cmd-chip" data-cmd="/plan ">📋 /plan</button>
@@ -216,13 +218,35 @@
   <div class="modal-backdrop hidden" id="path-modal">
     <div class="modal-card">
       <div class="modal-header">
-        <h3>📁 Arbeitsverzeichnis wechseln</h3>
+        <h3>📁 Arbeitsverzeichnis & Termux Storage</h3>
         <button class="modal-close-btn" id="path-modal-close">✕</button>
       </div>
       <div class="modal-body">
+        <!-- Quick Storage Shortcuts -->
+        <div class="quick-storage-bar">
+          <span class="quick-storage-label">Schnellzugriff:</span>
+          <div class="quick-storage-chips">
+            <button class="storage-chip" id="chip-downloads" data-path="~/storage/downloads" title="Android Download-Ordner">
+              <span class="chip-icon">📥</span> Downloads
+            </button>
+            <button class="storage-chip" id="chip-storage" data-path="~/storage" title="Termux Storage Hauptordner">
+              <span class="chip-icon">📱</span> Storage
+            </button>
+            <button class="storage-chip" id="chip-dcim" data-path="~/storage/dcim" title="Kamera & Bilder">
+              <span class="chip-icon">📷</span> DCIM
+            </button>
+            <button class="storage-chip" id="chip-home" data-path="~" title="Termux Home-Verzeichnis">
+              <span class="chip-icon">🏠</span> Home
+            </button>
+            <button class="storage-chip setup-chip" id="btn-setup-storage" title="termux-setup-storage ausführen & Speicherberechtigung einrichten">
+              <span class="chip-icon">⚡</span> Setup Storage
+            </button>
+          </div>
+        </div>
+
         <div class="path-input-group">
           <input type="text" id="manual-path-input" placeholder="/data/data/com.termux/files/home">
-          <button class="primary-btn" id="btn-apply-path">Wechseln</button>
+          <button class="primary-btn" id="btn-apply-path" title="Als aktives Arbeitsverzeichnis setzen">Als Workspace wählen</button>
         </div>
         <div class="path-breadcrumb" id="path-breadcrumb"></div>
         <div class="file-browser-list" id="file-browser-list">
@@ -272,6 +296,7 @@
           <div class="editor-toolbar">
             <span class="badge" id="file-size-badge">0 KB</span>
             <div class="editor-actions">
+              <a class="small-btn" id="btn-file-download" href="#" target="_blank" download title="Datei auf Smartphone herunterladen">💾 Download</a>
               <button class="small-btn" id="btn-file-ask-ai" title="KI nach dieser Datei fragen">⚡ In Chat fragen</button>
               <button class="small-btn" id="btn-file-run-python" title="Mit Python ausführen">🚀 Ausführen</button>
               <button class="small-btn primary" id="btn-file-save">💾 Speichern</button>

@@ -102,6 +102,72 @@ def get_local_ips():
         pass
     return ips
 
+def ensure_storage_symlinks():
+    storage_base = os.path.expanduser("~/storage")
+    os.makedirs(storage_base, exist_ok=True)
+    mapping = {
+        "shared": "/storage/emulated/0",
+        "downloads": "/storage/emulated/0/Download",
+        "dcim": "/storage/emulated/0/DCIM",
+        "pictures": "/storage/emulated/0/Pictures",
+        "music": "/storage/emulated/0/Music",
+        "movies": "/storage/emulated/0/Movies"
+    }
+    for name, target in mapping.items():
+        link_path = os.path.join(storage_base, name)
+        if not os.path.exists(link_path) and not os.path.islink(link_path):
+            try:
+                os.symlink(target, link_path)
+            except Exception:
+                pass
+
+def get_termux_storage_status():
+    storage_base = os.path.expanduser("~/storage")
+    exists = os.path.exists(storage_base) and os.path.isdir(storage_base)
+    folders = {}
+    known_targets = ["downloads", "dcim", "pictures", "shared", "movies", "music"]
+    if exists:
+        for name in known_targets:
+            p = os.path.join(storage_base, name)
+            is_valid = os.path.exists(p)
+            readable = False
+            item_count = 0
+            if is_valid:
+                try:
+                    item_count = len(os.listdir(p))
+                    readable = True
+                except Exception:
+                    readable = False
+            folders[name] = {
+                "path": p,
+                "exists": is_valid,
+                "readable": readable,
+                "items": item_count
+            }
+    return {
+        "storage_dir": storage_base,
+        "exists": exists,
+        "folders": folders,
+        "has_downloads": folders.get("downloads", {}).get("readable", False)
+    }
+
+def run_termux_setup_storage():
+    out = ""
+    try:
+        proc = subprocess.run("echo y | termux-setup-storage", shell=True, capture_output=True, text=True, timeout=10)
+        out = (proc.stdout + "\n" + proc.stderr).strip()
+    except Exception as e:
+        out = str(e)
+    
+    ensure_storage_symlinks()
+    status = get_termux_storage_status()
+    return {
+        "success": status["exists"],
+        "output": out,
+        "status": status,
+        "message": "Termux Storage wurde eingerichtet. Falls Android nach Zugriffsberechtigungen fragt, bitte auf 'Zulassen' tippen."
+    }
+
 def execute_shell_command(cmd, cwd):
     start = time.time()
     try:
@@ -228,8 +294,11 @@ class AntigravityHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def log_message(self, format, *args):
-        # Clean logging format
-        sys.stderr.write(f"[{datetime.now().strftime('%H:%M:%S')}] {args[0]} {args[1]} -> {args[2]}\n")
+        try:
+            msg = format % args if args else format
+            sys.stderr.write(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}\n")
+        except Exception:
+            sys.stderr.write(f"[{datetime.now().strftime('%H:%M:%S')}] {format}\n")
 
     def send_json_response(self, data, status_code=200):
         body = json.dumps(data).encode("utf-8")
@@ -248,6 +317,9 @@ class AntigravityHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
+
+    def do_HEAD(self):
+        self.do_GET()
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -323,9 +395,49 @@ class AntigravityHandler(BaseHTTPRequestHandler):
                     })
             return self.send_json_response({"messages": messages})
 
+        elif path == "/api/storage/status":
+            status = get_termux_storage_status()
+            return self.send_json_response(status)
+
+        elif path == "/api/file/download":
+            query = urllib.parse.parse_qs(parsed.query)
+            target_file = query.get("path", [""])[0]
+            if not target_file:
+                return self.send_json_response({"error": "Path required"}, 400)
+            with state_lock:
+                cwd = current_state["cwd"]
+            expanded = resolve_file_path(target_file, cwd)
+            if not os.path.exists(expanded) or os.path.isdir(expanded):
+                return self.send_json_response({"error": f"Datei '{target_file}' nicht gefunden"}, 404)
+            
+            filename = os.path.basename(expanded)
+            content_type, _ = mimetypes.guess_type(expanded)
+            if not content_type:
+                content_type = "application/octet-stream"
+            
+            try:
+                stat = os.stat(expanded)
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(stat.st_size))
+                self.send_header("Content-Disposition", f'attachment; filename="{urllib.parse.quote(filename)}"')
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+
+                with open(expanded, "rb") as f:
+                    while chunk := f.read(65536):
+                        self.wfile.write(chunk)
+                return
+            except Exception as e:
+                return self.send_json_response({"error": str(e)}, 500)
+
         elif path == "/api/files":
             query = urllib.parse.parse_qs(parsed.query)
             target_dir = query.get("path", [current_state["cwd"]])[0]
+            target_dir = os.path.expanduser(target_dir)
+            if not os.path.isabs(target_dir):
+                target_dir = os.path.abspath(os.path.join(current_state["cwd"], target_dir))
             if not os.path.exists(target_dir) or not os.path.isdir(target_dir):
                 target_dir = current_state["cwd"]
 
@@ -335,11 +447,12 @@ class AntigravityHandler(BaseHTTPRequestHandler):
                 for entry in sorted(os.scandir(target_dir), key=lambda e: (not e.is_dir(), e.name.lower())):
                     try:
                         stat = entry.stat()
+                        is_directory = entry.is_dir()
                         items.append({
                             "name": entry.name,
                             "path": entry.path,
-                            "is_dir": entry.is_dir(),
-                            "size": stat.st_size if not entry.is_dir() else None,
+                            "is_dir": is_directory,
+                            "size": stat.st_size if not is_directory else None,
                             "modified": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")
                         })
                     except Exception:
@@ -406,7 +519,14 @@ class AntigravityHandler(BaseHTTPRequestHandler):
         content_length = int(self.headers.get("Content-Length", 0))
         body_bytes = self.rfile.read(content_length)
 
-        if path == "/api/cd":
+        if path == "/api/setup-storage":
+            try:
+                res = run_termux_setup_storage()
+                return self.send_json_response(res)
+            except Exception as e:
+                return self.send_json_response({"error": str(e)}, 500)
+
+        elif path == "/api/cd":
             try:
                 data = json.loads(body_bytes.decode("utf-8"))
                 target = data.get("path", "").strip()
@@ -607,15 +727,89 @@ class AntigravityHandler(BaseHTTPRequestHandler):
                         "| :--- | :--- |\n"
                         "| *Jeder Freitext-Prompt* | Wird direkt von der Antigravity KI (Gemini 3.7) beantwortet & ausgeführt |\n"
                         "| `!<befehl>` oder `/run <cmd>` | Führt einen Shell-Befehl direkt in Termux aus |\n"
+                        "| `/setup-storage` | Richtet Termux Storage ein (`termux-setup-storage`) & verknüpft Downloads |\n"
+                        "| `/storage [ordner]` | Zeigt Speicherordner oder wechselt direkt (z. B. `/storage downloads`) |\n"
                         "| `/cd <pfad>` | Wechselt das Arbeitsverzeichnis |\n"
                         "| `/pwd` | Zeigt den aktuellen Pfad an |\n"
                         "| `/ls` | Listet Dateien im aktuellen Pfad auf |\n"
                         "| `/status` | Zeigt System- & Dashboard-Statusdetails |\n"
                         "| `/clear` | Leert den Chatverlauf & startet neue KI-Session |\n\n"
                         "> [!TIP]\n"
-                        "> Du kannst jede Frage stellen (z. B. *\"Funktioniert es wieder?\"* oder *\"Schreibe ein Skript...\"*) und der KI-Agent antwortet und agiert eigenständig!"
+                        "> Klicke oben auf **📥 /storage downloads**, um sofort auf deinen Android Download-Ordner zuzugreifen!"
                     ),
                     "metadata": {"type": "command_output", "cmd": "/help"}
+                }
+
+            elif cmd == "/setup-storage":
+                res = run_termux_setup_storage()
+                folders = res["status"]["folders"]
+                dl_status = "✅ Bereit" if folders.get("downloads", {}).get("readable") else "⚠️ Nicht bereit"
+                dcim_status = "✅ Bereit" if folders.get("dcim", {}).get("readable") else "⚠️ Nicht bereit"
+                shared_status = "✅ Bereit" if folders.get("shared", {}).get("readable") else "⚠️ Nicht bereit"
+                
+                content = (
+                    "### 📱 Termux Storage Setup\n\n"
+                    f"{res['message']}\n\n"
+                    "| Speicherbereich | Pfad | Status | Elemente |\n"
+                    "| :--- | :--- | :--- | :--- |\n"
+                    f"| 📥 **Downloads** | `~/storage/downloads` | {dl_status} | {folders.get('downloads', {}).get('items', 0)} Dateien |\n"
+                    f"| 📷 **DCIM / Kamera** | `~/storage/dcim` | {dcim_status} | {folders.get('dcim', {}).get('items', 0)} Dateien |\n"
+                    f"| 🖼️ **Bilder** | `~/storage/pictures` | {'✅ Bereit' if folders.get('pictures', {}).get('readable') else '⚠️ Nicht bereit'} | {folders.get('pictures', {}).get('items', 0)} Dateien |\n"
+                    f"| 📱 **Shared Storage** | `~/storage/shared` | {shared_status} | {folders.get('shared', {}).get('items', 0)} Dateien |\n\n"
+                    "> [!TIP]\n"
+                    "> Nutze `/storage downloads` oder klicke oben auf **📥 /storage downloads**, um direkt in deinen Download-Ordner zu wechseln!"
+                )
+                return {
+                    "content": content,
+                    "metadata": {"type": "storage_setup", "success": res["success"]}
+                }
+
+            elif cmd == "/storage":
+                status = get_termux_storage_status()
+                folders = status["folders"]
+                
+                if arg:
+                    target_key = arg.lower().strip()
+                    if target_key in ["dl", "download", "downloads"]:
+                        target_dir = os.path.expanduser("~/storage/downloads")
+                    elif target_key in ["dcim", "camera", "kamera", "fotos"]:
+                        target_dir = os.path.expanduser("~/storage/dcim")
+                    elif target_key in ["pic", "pics", "pictures", "bilder"]:
+                        target_dir = os.path.expanduser("~/storage/pictures")
+                    elif target_key in ["shared", "sdcard", "intern"]:
+                        target_dir = os.path.expanduser("~/storage/shared")
+                    else:
+                        target_dir = os.path.expanduser(f"~/storage/{target_key}")
+
+                    if os.path.exists(target_dir) and os.path.isdir(target_dir):
+                        with state_lock:
+                            current_state["cwd"] = os.path.abspath(target_dir)
+                        ls_res = execute_shell_command("ls -lah", target_dir)
+                        return {
+                            "content": (
+                                f"> [!NOTE]\n> Arbeitsverzeichnis gewechselt zu: `{target_dir}`\n\n"
+                                f"### 📂 Dateien in `{os.path.basename(target_dir)}`:\n```bash\n{ls_res['stdout'] or ls_res['stderr']}\n```"
+                            ),
+                            "metadata": {"action": "cd", "new_cwd": target_dir}
+                        }
+                    else:
+                        return {
+                            "content": f"> [!CAUTION]\n> Speicherordner `{target_dir}` ist nicht verfügbar. Bitte führe `/setup-storage` aus."
+                        }
+
+                content = (
+                    "### 📱 Termux Storage Übersicht\n\n"
+                    "Folgende Android-Speicherordner sind verknüpft:\n\n"
+                    f"- 📥 **Downloads:** `~/storage/downloads` ({folders.get('downloads', {}).get('items', 0)} Elemente) — Befehl: `/storage downloads`\n"
+                    f"- 📷 **DCIM / Kamera:** `~/storage/dcim` ({folders.get('dcim', {}).get('items', 0)} Elemente) — Befehl: `/storage dcim`\n"
+                    f"- 🖼️ **Bilder:** `~/storage/pictures` ({folders.get('pictures', {}).get('items', 0)} Elemente) — Befehl: `/storage pictures`\n"
+                    f"- 📱 **Shared Storage:** `~/storage/shared` ({folders.get('shared', {}).get('items', 0)} Elemente) — Befehl: `/storage shared`\n\n"
+                    "> [!TIP]\n"
+                    "> Du kannst auch das Ordner-Icon **📁** in der Leiste oben antippen, um den Download-Ordner grafisch zu durchsuchen und Dateien herunterzuladen!"
+                )
+                return {
+                    "content": content,
+                    "metadata": {"type": "storage_info"}
                 }
 
             elif cmd == "/status":
