@@ -291,7 +291,7 @@ def execute_agy_agent(prompt, cwd, conversation_id=None, images=None):
         }
 
 class AntigravityHandler(BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"
+    protocol_version = "HTTP/1.0"
 
     def log_message(self, format, *args):
         try:
@@ -301,27 +301,42 @@ class AntigravityHandler(BaseHTTPRequestHandler):
             sys.stderr.write(f"[{datetime.now().strftime('%H:%M:%S')}] {format}\n")
 
     def send_json_response(self, data, status_code=200):
-        body = json.dumps(data).encode("utf-8")
+        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Connection", "close")
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+            self.wfile.flush()
+        except Exception:
+            pass
 
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Connection", "close")
         self.end_headers()
 
     def do_HEAD(self):
         self.do_GET()
 
     def do_GET(self):
+        try:
+            self._handle_get()
+        except Exception as e:
+            try:
+                self.send_json_response({"error": str(e)}, 500)
+            except Exception:
+                pass
+
+    def _handle_get(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
@@ -514,6 +529,15 @@ class AntigravityHandler(BaseHTTPRequestHandler):
             self.send_error(404, "Not Found")
 
     def do_POST(self):
+        try:
+            self._handle_post()
+        except Exception as e:
+            try:
+                self.send_json_response({"error": str(e)}, 500)
+            except Exception:
+                pass
+
+    def _handle_post(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         content_length = int(self.headers.get("Content-Length", 0))
