@@ -84,11 +84,14 @@
     attachedImages: [], // Array of { url, filename, size }
     currentCwd: '~',
     isRecording: false,
+    isOverlayOpen: false,
     recognition: null,
-    speechBuffer: '',
+    committedSpeech: '',
+    currentSessionFinal: '',
+    currentSessionInterim: '',
     isSending: false,
-    pttTimer: null,
-    isPttHold: false
+    ttsKeepAliveTimer: null,
+    activeTTSBtn: null
   };
 
   // =========================================================================
@@ -447,22 +450,77 @@
     });
   }
 
-  // Text to Speech
+  // Text to Speech (TTS)
   function speakText(text, btn) {
     if (!('speechSynthesis' in window)) {
-      alert('Sprachausgabe wird in diesem Browser nicht unterstützt.');
+      alert('Sprachausgabe (Text-to-Speech) wird in diesem Browser nicht unterstützt.');
       return;
     }
+
+    // Toggle off if already speaking the same message
+    if (window.speechSynthesis.speaking && state.activeTTSBtn === btn) {
+      window.speechSynthesis.cancel();
+      if (state.ttsKeepAliveTimer) clearInterval(state.ttsKeepAliveTimer);
+      if (btn) btn.textContent = '🔊 Vorlesen';
+      state.activeTTSBtn = null;
+      return;
+    }
+
+    // Cancel any previous readout
     window.speechSynthesis.cancel();
-    // Strip markdown formatting for cleaner speech
-    const clean = text.replace(/[#*`_>\[\]]/g, ' ').replace(/\(https?:\/\/[^\)]+\)/g, '');
+    if (state.ttsKeepAliveTimer) clearInterval(state.ttsKeepAliveTimer);
+    if (state.activeTTSBtn) {
+      state.activeTTSBtn.textContent = '🔊 Vorlesen';
+    }
+
+    // Clean up text: remove code blocks, markdown syntax, links, excessive whitespace
+    const clean = text
+      .replace(/```[\s\S]*?```/g, ' [Code-Block übersprungen] ')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/[#*_>~\[\]\(\)]/g, ' ')
+      .replace(/https?:\/\/\S+/g, ' Link ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!clean) return;
+
     const utter = new SpeechSynthesisUtterance(clean);
     utter.lang = 'de-DE';
     utter.rate = 1.0;
-    
-    if (btn) btn.textContent = '🔊 Sprich...';
-    utter.onend = () => { if (btn) btn.textContent = '🔊 Vorlesen'; };
-    utter.onerror = () => { if (btn) btn.textContent = '🔊 Vorlesen'; };
+    utter.pitch = 1.0;
+
+    // Pick best matching German voice if available
+    const voices = window.speechSynthesis.getVoices();
+    const deVoice = voices.find(v => v.lang && v.lang.startsWith('de') && (v.name.includes('Natural') || v.name.includes('Google') || v.default));
+    if (deVoice) utter.voice = deVoice;
+
+    if (btn) {
+      btn.textContent = '⏹ Stopp';
+      state.activeTTSBtn = btn;
+    }
+
+    utter.onend = () => {
+      if (btn) btn.textContent = '🔊 Vorlesen';
+      if (state.ttsKeepAliveTimer) clearInterval(state.ttsKeepAliveTimer);
+      state.activeTTSBtn = null;
+    };
+
+    utter.onerror = (e) => {
+      console.warn('TTS error:', e);
+      if (btn) btn.textContent = '🔊 Vorlesen';
+      if (state.ttsKeepAliveTimer) clearInterval(state.ttsKeepAliveTimer);
+      state.activeTTSBtn = null;
+    };
+
+    // Chrome/Android 15s keepalive fix for long utterances
+    state.ttsKeepAliveTimer = setInterval(() => {
+      if (window.speechSynthesis.speaking) {
+        window.speechSynthesis.pause();
+        window.speechSynthesis.resume();
+      } else {
+        clearInterval(state.ttsKeepAliveTimer);
+      }
+    }, 10000);
 
     window.speechSynthesis.speak(utter);
   }
@@ -470,81 +528,107 @@
   // =========================================================================
   // WEB SPEECH API (PUSH-TO-TALK & VOICE DICTATION)
   // =========================================================================
+  function isSecureOrLocal() {
+    return window.isSecureContext || 
+           location.hostname === 'localhost' || 
+           location.hostname === '127.0.0.1' || 
+           location.hostname === '0.0.0.0';
+  }
+
+  function formatSpeechText(rawText) {
+    if (!rawText) return '';
+    let text = rawText.trim();
+
+    // Normalize multiple spaces
+    text = text.replace(/\s+/g, ' ');
+
+    // Deduplicate adjacent repeated multi-word phrases & single words
+    // Solves Android Web Speech API duplicate stutter / buffer replay
+    for (let phraseLen = 8; phraseLen >= 1; phraseLen--) {
+      const pattern = new RegExp(`\\b(${'\\S+\\s+'.repeat(phraseLen - 1)}\\S+)\\s+\\1\\b`, 'gi');
+      let prev = '';
+      while (prev !== text) {
+        prev = text;
+        text = text.replace(pattern, '$1');
+      }
+    }
+
+    // Natural punctuation formatting (German & English spoken punctuation)
+    text = text
+      .replace(/\s+([.,!?:;])/g, '$1')
+      .replace(/\b(neue zeile|absatz|new line)\b/gi, '\n')
+      .replace(/\b(punkt|full stop|period)\b/gi, '.')
+      .replace(/\b(komma|comma)\b/gi, ',')
+      .replace(/\b(fragezeichen|question mark)\b/gi, '?')
+      .replace(/\b(ausrufezeichen|exclamation mark)\b/gi, '!');
+
+    // Re-clean spacing before punctuation in case replacements created spaces
+    text = text.replace(/\s+([.,!?:;])/g, '$1');
+
+    // Sentence casing: Capitalize start of text and after sentence terminators
+    text = text.replace(/(^|[.!?\n]\s+)([a-zäöü])/g, (match, prefix, char) => {
+      return prefix + char.toUpperCase();
+    });
+
+    return text.trim();
+  }
+
   function setupSpeechRecognition() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
       console.warn('Speech Recognition not supported in this browser.');
-      btnMic.title = 'Spracheingabe im Browser nicht verfügbar';
+      btnMic.title = 'Spracheingabe im aktuellen Browser nicht verfügbar (Google Chrome empfohlen)';
       btnMic.style.opacity = '0.5';
       return;
     }
 
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = voiceLangSelect.value || 'de-DE';
+    if (!isSecureOrLocal()) {
+      console.warn('Speech Recognition requires HTTPS or localhost/127.0.0.1 context.');
+      btnMic.title = 'Spracheingabe benötigt HTTPS oder Aufruf über http://localhost:8080';
+    }
 
-    recognition.onstart = () => {
-      state.isRecording = true;
-      btnMic.classList.add('active');
-    };
+    // Touch & Mouse Event Handling with pointer events
+    let touchStartTime = 0;
+    let isHolding = false;
+    let holdTimer = null;
 
-    recognition.onresult = (event) => {
-      let interim = '';
-      let final = '';
+    btnMic.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      touchStartTime = Date.now();
+      isHolding = false;
 
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
-        if (event.results[i].isFinal) {
-          final += event.results[i][0].transcript + ' ';
+      // Hold threshold for Push-to-Talk (350ms)
+      holdTimer = setTimeout(() => {
+        isHolding = true;
+        if (!state.isRecording) {
+          startVoiceCapture(false); // Quick PTT mode
+        }
+      }, 350);
+    });
+
+    btnMic.addEventListener('pointerup', (e) => {
+      clearTimeout(holdTimer);
+      const pressDuration = Date.now() - touchStartTime;
+
+      if (isHolding) {
+        // Was holding PTT -> commit and stop
+        isHolding = false;
+        stopVoiceCapture(true);
+      } else if (pressDuration < 350) {
+        // Quick tap/click -> toggle Overlay modal
+        if (state.isRecording || state.isOverlayOpen) {
+          stopVoiceCapture(true);
         } else {
-          interim += event.results[i][0].transcript;
+          startVoiceCapture(true);
         }
       }
-
-      if (final) {
-        state.speechBuffer += final;
-      }
-      voiceInterimText.textContent = state.speechBuffer + interim || 'Spreche...';
-    };
-
-    recognition.onerror = (event) => {
-      console.error('Speech recognition error:', event.error);
-      voiceStatusTitle.textContent = `Fehler: ${event.error}`;
-    };
-
-    recognition.onend = () => {
-      state.isRecording = false;
-      btnMic.classList.remove('active');
-    };
-
-    state.recognition = recognition;
-
-    // Push-to-Talk Event Listeners (Mobile touch & desktop click/hold)
-    // 1. Hold to speak
-    btnMic.addEventListener('touchstart', (e) => {
-      e.preventDefault();
-      state.isPttHold = true;
-      state.pttTimer = setTimeout(() => {
-        startVoiceCapture(false); // Quick PTT mode
-      }, 150);
     });
 
-    btnMic.addEventListener('touchend', (e) => {
-      e.preventDefault();
-      clearTimeout(state.pttTimer);
-      if (state.isRecording && state.isPttHold) {
-        stopVoiceCapture(true); // Commit recognized text
-      }
-      state.isPttHold = false;
-    });
-
-    // 2. Click to toggle Voice Overlay Modal
-    btnMic.addEventListener('click', (e) => {
-      if (state.isPttHold) return;
-      if (state.isRecording) {
-        stopVoiceCapture(true);
-      } else {
-        startVoiceCapture(true); // Show overlay
+    btnMic.addEventListener('pointercancel', () => {
+      clearTimeout(holdTimer);
+      if (isHolding) {
+        isHolding = false;
+        stopVoiceCapture(false);
       }
     });
 
@@ -552,19 +636,142 @@
     voiceDoneBtn.addEventListener('click', () => stopVoiceCapture(true));
     voiceCancelBtn.addEventListener('click', () => stopVoiceCapture(false));
     voiceLangSelect.addEventListener('change', () => {
-      if (state.recognition) {
-        state.recognition.lang = voiceLangSelect.value;
+      if (state.recognition && state.isRecording) {
+        const finishedText = (state.currentSessionFinal + ' ' + (state.currentSessionInterim || '')).trim();
+        if (finishedText) {
+          state.committedSpeech = (state.committedSpeech ? state.committedSpeech + ' ' : '') + finishedText;
+        }
+        state.currentSessionFinal = '';
+        state.currentSessionInterim = '';
+        startVoiceCapture(state.isOverlayOpen);
       }
     });
   }
 
+  function createRecognitionInstance() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return null;
+
+    const rec = new SpeechRecognition();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.maxAlternatives = 1;
+    rec.lang = voiceLangSelect.value || 'de-DE';
+
+    rec.onstart = () => {
+      state.isRecording = true;
+      btnMic.classList.add('active');
+      voiceStatusTitle.textContent = 'Ich höre zu...';
+    };
+
+    rec.onresult = (event) => {
+      let sessionFinal = '';
+      let sessionInterim = '';
+
+      // Reconstruct transcript cleanly from event.results to prevent duplicate appending
+      for (let i = 0; i < event.results.length; ++i) {
+        const item = event.results[i];
+        if (item && item[0]) {
+          const transcript = item[0].transcript || '';
+          if (item.isFinal) {
+            sessionFinal += transcript + ' ';
+          } else {
+            sessionInterim += transcript;
+          }
+        }
+      }
+
+      state.currentSessionFinal = sessionFinal;
+      state.currentSessionInterim = sessionInterim;
+
+      const liveText = formatSpeechText([
+        state.committedSpeech,
+        sessionFinal,
+        sessionInterim
+      ].filter(Boolean).join(' '));
+
+      voiceInterimText.textContent = liveText || 'Ich höre zu...';
+    };
+
+    rec.onerror = (event) => {
+      console.warn('Speech recognition error:', event.error);
+      if (event.error === 'no-speech') {
+        if (!state.committedSpeech && !state.currentSessionFinal && !state.currentSessionInterim) {
+          voiceStatusTitle.textContent = 'Keine Sprache erkannt';
+        }
+        return;
+      }
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        voiceStatusTitle.textContent = 'Mikrofon blockiert';
+        voiceInterimText.textContent = isSecureOrLocal()
+          ? 'Bitte erlaube den Mikrofon-Zugriff in den Browser-Einstellungen.'
+          : 'Web Speech API benötigt HTTPS oder den Aufruf über http://localhost:8080!';
+        return;
+      }
+      if (event.error === 'network') {
+        voiceStatusTitle.textContent = 'Netzwerkfehler';
+        voiceInterimText.textContent = 'Google Spracherkennungsdienst nicht erreichbar.';
+        return;
+      }
+      if (event.error === 'aborted') {
+        return;
+      }
+      voiceStatusTitle.textContent = `Fehler: ${event.error}`;
+    };
+
+    rec.onend = () => {
+      // Commit the completed session text safely
+      const finishedText = (state.currentSessionFinal + ' ' + (state.currentSessionInterim || '')).trim();
+      if (finishedText) {
+        if (state.committedSpeech) {
+          if (!state.committedSpeech.endsWith(finishedText)) {
+            state.committedSpeech = (state.committedSpeech + ' ' + finishedText).trim();
+          }
+        } else {
+          state.committedSpeech = finishedText;
+        }
+      }
+      state.currentSessionFinal = '';
+      state.currentSessionInterim = '';
+
+      // Auto-restart if overlay is still actively open and recording was not explicitly stopped
+      if (state.isOverlayOpen && state.isRecording) {
+        try {
+          rec.start();
+          return;
+        } catch (e) {
+          console.warn('Auto-restart recognition failed:', e);
+        }
+      }
+      state.isRecording = false;
+      btnMic.classList.remove('active');
+    };
+
+    return rec;
+  }
+
   function startVoiceCapture(showOverlay = true) {
-    if (!state.recognition) {
-      alert('Die Web Speech API wird in deinem Mobil-Browser nicht unterstützt. Bitte nutze Google Chrome oder Safari.');
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert('Die Web Speech API wird in deinem aktuellen Browser nicht unterstützt. Bitte nutze Google Chrome oder Safari.');
       return;
     }
+
+    if (!isSecureOrLocal()) {
+      alert('⚠️ Hinweis: Die Web Speech API (Mikrofon) erfordert aus Sicherheitsgründen HTTPS oder den lokalen Aufruf über http://localhost:8080 bzw. http://127.0.0.1:8080 auf diesem Gerät.');
+    }
+
+    // Stop any existing instance cleanly
+    if (state.recognition) {
+      try { state.recognition.abort(); } catch (e) {}
+    }
+
     if (navigator.vibrate) navigator.vibrate(40);
-    state.speechBuffer = '';
+    state.committedSpeech = '';
+    state.currentSessionFinal = '';
+    state.currentSessionInterim = '';
+    state.isRecording = true;
+    state.isOverlayOpen = showOverlay;
     voiceInterimText.textContent = 'Sprich jetzt...';
     voiceStatusTitle.textContent = 'Ich höre zu...';
 
@@ -572,28 +779,52 @@
       voiceOverlay.classList.remove('hidden');
     }
 
+    state.recognition = createRecognitionInstance();
+    if (!state.recognition) return;
+
     try {
-      state.recognition.lang = voiceLangSelect.value || 'de-DE';
       state.recognition.start();
     } catch (e) {
       console.warn('Recognition start caught:', e);
+      try {
+        state.recognition.abort();
+        setTimeout(() => state.recognition && state.recognition.start(), 100);
+      } catch (err) {}
     }
   }
 
   function stopVoiceCapture(commit = true) {
-    if (state.recognition && state.isRecording) {
-      state.recognition.stop();
+    const wasRecording = state.isRecording || state.isOverlayOpen;
+    state.isOverlayOpen = false;
+    state.isRecording = false;
+
+    if (state.recognition) {
+      try {
+        state.recognition.stop();
+      } catch (e) {}
     }
+
+    btnMic.classList.remove('active');
     voiceOverlay.classList.add('hidden');
     if (navigator.vibrate) navigator.vibrate(25);
 
-    if (commit && state.speechBuffer.trim()) {
-      const textToAppend = state.speechBuffer.trim();
-      chatInput.value = (chatInput.value ? chatInput.value + ' ' : '') + textToAppend;
-      adjustTextareaHeight();
-      chatInput.focus();
+    if (commit && wasRecording) {
+      const fullText = formatSpeechText([
+        state.committedSpeech,
+        state.currentSessionFinal,
+        state.currentSessionInterim
+      ].filter(Boolean).join(' '));
+
+      if (fullText) {
+        const prev = chatInput.value.trim();
+        chatInput.value = prev ? `${prev} ${fullText}` : fullText;
+        adjustTextareaHeight();
+        chatInput.focus();
+      }
     }
-    state.speechBuffer = '';
+    state.committedSpeech = '';
+    state.currentSessionFinal = '';
+    state.currentSessionInterim = '';
   }
 
   // =========================================================================
@@ -1337,7 +1568,7 @@
         pathModal.classList.add('hidden');
         infoModal.classList.add('hidden');
         fileModal.classList.add('hidden');
-        voiceOverlay.classList.add('hidden');
+        stopVoiceCapture(false);
       }
     });
   }
