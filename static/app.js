@@ -196,14 +196,22 @@
     appendMessageToDOM(userMsg, true);
     scrollToBottom(true);
 
-    // Show typing indicator
     state.isSending = true;
     btnSend.disabled = true;
-    typingIndicator.classList.remove('hidden');
+
+    // Create live assistant message element
+    const assistantMsg = {
+      id: 'asst_' + Date.now(),
+      role: 'assistant',
+      content: '',
+      created_at: new Date().toISOString()
+    };
+    const liveEl = createLiveAssistantElement(assistantMsg);
+    messagesList.appendChild(liveEl.item);
     scrollToBottom(true);
 
     try {
-      const res = await fetch('/api/chat', {
+      const res = await fetch('/api/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -213,27 +221,151 @@
       });
 
       if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-      const data = await res.json();
 
-      typingIndicator.classList.add('hidden');
-      appendMessageToDOM(data, true);
-      scrollToBottom(true);
-      
-      // Refresh status in case CWD changed
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let streamDone = false;
+
+      while (!streamDone) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop(); // keep partial line
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('data: ')) {
+            try {
+              const evt = JSON.parse(trimmed.slice(6));
+              updateLiveAssistantElement(liveEl, evt);
+              if (evt.type === 'done' || evt.type === 'error') {
+                streamDone = true;
+                break;
+              }
+            } catch (err) {
+              console.warn('SSE parse error:', err);
+            }
+          }
+        }
+      }
+
+      try {
+        await reader.cancel();
+      } catch (_) {}
+
+      finalizeLiveAssistantElement(liveEl);
       fetchStatus();
     } catch (err) {
-      typingIndicator.classList.add('hidden');
-      appendMessageToDOM({
-        id: 'err_' + Date.now(),
-        role: 'assistant',
-        content: `> [!CAUTION]\n> **Fehler bei der Kommunikation:** ${err.message}`,
-        created_at: new Date().toISOString()
-      }, true);
+      if (liveEl.statusBadge && liveEl.statusBadge.parentNode) {
+        liveEl.statusBadge.remove();
+      }
+      liveEl.bubble.innerHTML = renderMarkdown(`> [!CAUTION]\n> **Fehler bei der Kommunikation:** ${err.message}`);
       scrollToBottom(true);
     } finally {
       state.isSending = false;
       btnSend.disabled = false;
       chatInput.focus();
+    }
+  }
+
+  function createLiveAssistantElement(msg) {
+    const item = document.createElement('div');
+    item.className = 'message-item assistant';
+    item.id = msg.id;
+
+    const avatar = document.createElement('div');
+    avatar.className = 'msg-avatar';
+    avatar.textContent = '⚡';
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'msg-content-wrapper';
+
+    const statusBadge = document.createElement('div');
+    statusBadge.className = 'live-status-badge';
+    statusBadge.innerHTML = `<span class="live-pulse-dot"></span> <span class="badge-text">Antigravity initialisiert...</span>`;
+    wrapper.appendChild(statusBadge);
+
+    const bubble = document.createElement('div');
+    bubble.className = 'msg-bubble';
+    bubble.innerHTML = `<span class="streaming-cursor">▍</span>`;
+    wrapper.appendChild(bubble);
+
+    const meta = document.createElement('div');
+    meta.className = 'msg-meta';
+    meta.innerHTML = `<span>Antigravity</span> • <span>${formatTime(msg.created_at)}</span>`;
+    wrapper.appendChild(meta);
+
+    item.appendChild(avatar);
+    item.appendChild(wrapper);
+
+    return { item, wrapper, bubble, statusBadge, meta, accumulatedText: '' };
+  }
+
+  function updateLiveAssistantElement(liveEl, evt) {
+    const type = evt.type;
+    const data = evt.data || {};
+
+    if (type === 'status') {
+      liveEl.statusBadge.innerHTML = `<span class="live-pulse-dot"></span> <span class="badge-text">${escapeHTML(data.text || '')}</span>`;
+      scrollToBottom(false);
+    } else if (type === 'tool_start') {
+      const toolName = escapeHTML(data.tool || 'Tool');
+      const detail = escapeHTML(data.detail || '');
+      liveEl.statusBadge.innerHTML = `<span class="live-pulse-dot"></span> <strong>⚡ ${toolName}</strong> <span class="tool-detail">${detail}</span>`;
+      scrollToBottom(false);
+    } else if (type === 'tool_done') {
+      const toolName = escapeHTML(data.tool || 'Tool');
+      liveEl.statusBadge.innerHTML = `<span class="live-pulse-dot"></span> <span>✅ ${toolName} abgeschlossen</span>`;
+      scrollToBottom(false);
+    } else if (type === 'delta') {
+      liveEl.accumulatedText = data.accumulated !== undefined ? data.accumulated : (liveEl.accumulatedText + (data.text || ''));
+      liveEl.bubble.innerHTML = renderMarkdown(liveEl.accumulatedText) + '<span class="streaming-cursor">▍</span>';
+      attachCodeBlockHandlers(liveEl.bubble);
+      scrollToBottom(false);
+    } else if (type === 'done') {
+      liveEl.accumulatedText = data.content || liveEl.accumulatedText;
+      liveEl.bubble.innerHTML = renderMarkdown(liveEl.accumulatedText);
+      attachCodeBlockHandlers(liveEl.bubble);
+      if (liveEl.statusBadge && liveEl.statusBadge.parentNode) {
+        liveEl.statusBadge.remove();
+      }
+      scrollToBottom(true);
+    } else if (type === 'error') {
+      liveEl.bubble.innerHTML = renderMarkdown(data.error || 'Fehler aufgetreten');
+      if (liveEl.statusBadge && liveEl.statusBadge.parentNode) {
+        liveEl.statusBadge.remove();
+      }
+      scrollToBottom(true);
+    }
+  }
+
+  function finalizeLiveAssistantElement(liveEl) {
+    if (liveEl.statusBadge && liveEl.statusBadge.parentNode) {
+      liveEl.statusBadge.remove();
+    }
+    const cursor = liveEl.bubble.querySelector('.streaming-cursor');
+    if (cursor) cursor.remove();
+
+    if (!liveEl.wrapper.querySelector('.msg-actions') && liveEl.accumulatedText) {
+      const actions = document.createElement('div');
+      actions.className = 'msg-actions';
+
+      const btnCopy = document.createElement('button');
+      btnCopy.className = 'action-pill-btn';
+      btnCopy.textContent = '📋 Kopieren';
+      btnCopy.addEventListener('click', () => copyToClipboard(liveEl.accumulatedText, btnCopy));
+
+      const btnTTS = document.createElement('button');
+      btnTTS.className = 'action-pill-btn';
+      btnTTS.textContent = '🔊 Vorlesen';
+      btnTTS.addEventListener('click', () => speakText(liveEl.accumulatedText, btnTTS));
+
+      actions.appendChild(btnCopy);
+      actions.appendChild(btnTTS);
+      liveEl.wrapper.insertBefore(actions, liveEl.meta);
     }
   }
 

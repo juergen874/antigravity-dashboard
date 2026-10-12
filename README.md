@@ -14,6 +14,7 @@ Ein extrem leichtgewichtiges, modernes und mobiles Web-Dashboard für die **Anti
 
 ### 2. 💬 Hauptbereich (Chat & Visuals)
 - **Mobile-First Responsive Layout:** Optimiert für iOS & Android (Safe Area Insets, Dynamic Viewport Height `100dvh`, Touch-Scrolling).
+- **Echtzeit-KI-Streaming (SSE):** Live-Stream von Antigravity-Tokens und Tool-Ausführungen mit pulsierenden Status-Badges und sofortiger Eingabefeld-Reaktivierung.
 - **Markdown-Rendering:**
   - Codeblöcke mit Syntax-Header, Sprache-Tag und 1-Klick **"Kopieren"**-Button.
   - GitHub Flavored Callouts (`> [!NOTE]`, `> [!TIP]`, `> [!IMPORTANT]`, `> [!WARNING]`, `> [!CAUTION]`).

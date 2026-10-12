@@ -220,11 +220,16 @@ def execute_agy_agent(prompt, cwd, conversation_id=None, images=None):
         if img_paths:
             augmented_prompt += f"\n\n[Hinweis: Der Benutzer hat folgende Bilddatei(en) auf dem Gerät hochgeladen: {', '.join(img_paths)}]"
 
-    cmd = ["agy", "--dangerously-skip-permissions", "--output-format", "json"]
+    cmd = ["agy", "--dangerously-skip-permissions", "--output-format", "json", "--print-timeout", "60m"]
     if conversation_id:
         cmd.extend(["--conversation", conversation_id])
     
     cmd.extend(["--print", augmented_prompt])
+
+    env = os.environ.copy()
+    for k in list(env.keys()):
+        if k.startswith("ANTIGRAVITY_") and k not in ("ANTIGRAVITY_DATA_DIR",):
+            del env[k]
 
     start_time = time.time()
     try:
@@ -233,7 +238,8 @@ def execute_agy_agent(prompt, cwd, conversation_id=None, images=None):
             cwd=cwd,
             capture_output=True,
             text=True,
-            timeout=240
+            timeout=None,
+            env=env
         )
         elapsed = round(time.time() - start_time, 2)
 
@@ -276,9 +282,9 @@ def execute_agy_agent(prompt, cwd, conversation_id=None, images=None):
     except subprocess.TimeoutExpired:
         return {
             "success": False,
-            "content": "> [!CAUTION]\n> **Timeout:** Die KI-Antwort hat das Zeitlimit von 240 Sekunden überschritten.",
+            "content": "> [!CAUTION]\n> **Timeout:** Die KI-Antwort hat das Zeitlimit überschritten.",
             "conversation_id": conversation_id,
-            "duration": ">240s",
+            "duration": ">60m",
             "metadata": {"timeout": True}
         }
     except Exception as e:
@@ -609,6 +615,29 @@ class AntigravityHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self.send_json_response({"error": str(e)}, 500)
 
+        elif path == "/api/chat/stream":
+            try:
+                data = json.loads(body_bytes.decode("utf-8"))
+                user_msg = data.get("message", "").strip()
+                images = data.get("images", [])
+
+                if not user_msg and not images:
+                    return self.send_json_response({"error": "Empty message"}, 400)
+
+                msg_id = str(uuid.uuid4())
+                with get_db() as conn:
+                    conn.execute(
+                        "INSERT INTO messages (id, role, content, images, metadata) VALUES (?, ?, ?, ?, ?)",
+                        (msg_id, "user", user_msg, json.dumps(images), json.dumps({"source": "web_dashboard"}))
+                    )
+                    conn.commit()
+
+                # Process streaming response via SSE
+                self.stream_agent_response(user_msg, images)
+                return
+            except Exception as e:
+                return self.send_json_response({"error": str(e)}, 500)
+
         elif path == "/api/chat":
             try:
                 data = json.loads(body_bytes.decode("utf-8"))
@@ -729,6 +758,204 @@ class AntigravityHandler(BaseHTTPRequestHandler):
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
             pass
+
+    def stream_agent_response(self, message, images):
+        raw = message.strip()
+        with state_lock:
+            cwd = current_state["cwd"]
+            conv_id = current_state.get("conversation_id")
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, no-transform")
+        self.send_header("Connection", "close")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.close_connection = True
+
+        def send_event(event_type, payload):
+            try:
+                data_str = json.dumps({"type": event_type, "data": payload}, ensure_ascii=False)
+                msg = f"event: {event_type}\ndata: {data_str}\n\n".encode("utf-8")
+                self.wfile.write(msg)
+                self.wfile.flush()
+                return True
+            except (BrokenPipeError, ConnectionResetError):
+                return False
+
+        # 1. Quick local slash commands or shell commands
+        if raw.startswith("/") or raw.startswith("!"):
+            send_event("status", {"text": "Führe Befehl aus..."})
+            local_res = self.process_agent_response(raw, images)
+            content = local_res.get("content", "")
+            resp_id = str(uuid.uuid4())
+            with get_db() as conn:
+                conn.execute(
+                    "INSERT INTO messages (id, role, content, images, metadata) VALUES (?, ?, ?, ?, ?)",
+                    (resp_id, "assistant", content, json.dumps([]), json.dumps(local_res.get("metadata", {})))
+                )
+                conn.commit()
+            send_event("delta", {"text": content, "accumulated": content})
+            send_event("done", {
+                "id": resp_id,
+                "role": "assistant",
+                "content": content,
+                "metadata": local_res.get("metadata", {}),
+                "created_at": datetime.now().isoformat()
+            })
+            self.close_connection = True
+            return
+
+        # 2. Live AI execution via Antigravity CLI in stream-json mode
+        send_event("status", {"text": "Verbinde mit Antigravity KI..."})
+
+        augmented_prompt = raw
+        if images:
+            img_paths = []
+            for img_url in images:
+                filename = os.path.basename(img_url)
+                full_path = os.path.join(UPLOADS_DIR, filename)
+                if os.path.exists(full_path):
+                    img_paths.append(full_path)
+            if img_paths:
+                augmented_prompt += f"\n\n[Hinweis: Der Benutzer hat folgende Bilddatei(en) auf dem Gerät hochgeladen: {', '.join(img_paths)}]"
+
+        cmd = [
+            "agy",
+            "--dangerously-skip-permissions",
+            "--output-format", "stream-json",
+            "--print-timeout", "60m"
+        ]
+        if conv_id:
+            cmd.extend(["--conversation", conv_id])
+        cmd.extend(["--print", augmented_prompt])
+
+        env = os.environ.copy()
+        for k in list(env.keys()):
+            if k.startswith("ANTIGRAVITY_") and k not in ("ANTIGRAVITY_DATA_DIR",):
+                del env[k]
+
+        start_time = time.time()
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=cwd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                env=env
+            )
+        except Exception as e:
+            err_msg = f"> [!CAUTION]\n> **Systemfehler beim Starten von `agy`:** {str(e)}"
+            send_event("error", {"error": err_msg})
+            self.close_connection = True
+            return
+
+        accumulated_text = ""
+        full_response = ""
+        new_conv_id = conv_id
+        usage = {}
+
+        try:
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    evt = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                event_name = evt.get("event")
+                if event_name == "init":
+                    new_conv_id = evt.get("conversation_id", new_conv_id)
+                    send_event("status", {"text": "🧠 KI analysiert Anfrage..."})
+                elif event_name == "step_update":
+                    su = evt.get("step_update", {})
+                    stype = su.get("step_type")
+                    state = su.get("state")
+
+                    if stype == "checkpoint":
+                        send_event("status", {"text": "🧠 Denke nach & plane Schritte..."})
+                    elif stype == "tool":
+                        tname = su.get("tool_name") or su.get("tool_info", {}).get("name", "Tool")
+                        tinfo = su.get("tool_info", {})
+                        tparams = tinfo.get("parameters", {})
+                        param_summary = ""
+                        if "CommandLine" in tparams:
+                            param_summary = f": {tparams['CommandLine'][:60]}"
+                        elif "AbsolutePath" in tparams:
+                            param_summary = f": {os.path.basename(tparams['AbsolutePath'])}"
+                        elif "Query" in tparams:
+                            param_summary = f": {tparams['Query'][:40]}"
+                        elif "TargetFile" in tparams:
+                            param_summary = f": {os.path.basename(tparams['TargetFile'])}"
+
+                        if state == "ACTIVE":
+                            send_event("tool_start", {"tool": tname, "detail": param_summary})
+                        elif state == "DONE":
+                            send_event("tool_done", {"tool": tname, "detail": param_summary})
+                    elif stype == "agent_response":
+                        delta = su.get("text_delta", "")
+                        if delta:
+                            accumulated_text += delta
+                            send_event("delta", {"text": delta, "accumulated": accumulated_text})
+                        if su.get("usage"):
+                            usage = su.get("usage")
+                elif event_name == "result":
+                    res_obj = evt.get("result", {})
+                    full_response = res_obj.get("response", accumulated_text)
+                    new_conv_id = res_obj.get("conversation_id", new_conv_id)
+                    usage = res_obj.get("usage", usage)
+
+            proc.wait()
+            elapsed = round(time.time() - start_time, 2)
+
+            if proc.returncode != 0 and not full_response and not accumulated_text:
+                err_out = proc.stderr.read() if proc.stderr else ""
+                err_content = f"> [!CAUTION]\n> **Antigravity CLI Fehler (Code {proc.returncode}):**\n\n```text\n{err_out.strip() or 'Unbekannter Fehler'}\n```"
+                send_event("error", {"error": err_content})
+                self.close_connection = True
+                return
+
+            final_text = full_response or accumulated_text or "(Keine Textausgabe)"
+            with state_lock:
+                current_state["conversation_id"] = new_conv_id
+
+            resp_id = str(uuid.uuid4())
+            with get_db() as conn:
+                conn.execute(
+                    "INSERT INTO messages (id, role, content, images, metadata) VALUES (?, ?, ?, ?, ?)",
+                    (resp_id, "assistant", final_text, json.dumps([]), json.dumps({
+                        "agent": "Antigravity CLI",
+                        "conversation_id": new_conv_id,
+                        "duration": f"{elapsed}s",
+                        "tokens": usage.get("total_tokens", 0)
+                    }))
+                )
+                conn.commit()
+
+            send_event("done", {
+                "id": resp_id,
+                "role": "assistant",
+                "content": final_text,
+                "duration": f"{elapsed}s",
+                "conversation_id": new_conv_id,
+                "usage": usage,
+                "created_at": datetime.now().isoformat()
+            })
+            self.close_connection = True
+
+        except (BrokenPipeError, ConnectionResetError):
+            if proc.poll() is None:
+                proc.terminate()
+        except Exception as e:
+            err_content = f"> [!CAUTION]\n> **Unerwarteter Fehler:** {str(e)}"
+            send_event("error", {"error": err_content})
+        finally:
+            self.close_connection = True
 
     def process_agent_response(self, message, images):
         raw = message.strip()
@@ -952,7 +1179,27 @@ class AntigravityServer(ThreadingHTTPServer):
     allow_reuse_address = True
     daemon_threads = True
 
-def run_server(port=PORT):
+def launch_browser_tab(port, delay=0.8):
+    def _target():
+        time.sleep(delay)
+        url = f"http://localhost:{port}"
+        import shutil
+        try:
+            if shutil.which("termux-open-url"):
+                subprocess.run(["termux-open-url", url], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            elif shutil.which("termux-open"):
+                subprocess.run(["termux-open", url], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            elif shutil.which("xdg-open"):
+                subprocess.run(["xdg-open", url], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                import webbrowser
+                webbrowser.open(url)
+        except Exception:
+            pass
+    import threading
+    threading.Thread(target=_target, daemon=True).start()
+
+def run_server(port=PORT, open_browser=False):
     server_address = ("0.0.0.0", port)
     AntigravityServer.allow_reuse_address = True
     httpd = AntigravityServer(server_address, AntigravityHandler)
@@ -966,6 +1213,8 @@ def run_server(port=PORT):
             print(f"🌐 Mobil / WLAN:   http://{ip}:{port}")
     print(f"📁 Workspace Pfad: {current_state['cwd']}")
     print(f"=======================================================\n")
+    if open_browser:
+        launch_browser_tab(port)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
@@ -974,6 +1223,10 @@ def run_server(port=PORT):
 
 if __name__ == "__main__":
     p = PORT
-    if len(sys.argv) > 1 and sys.argv[1].isdigit():
-        p = int(sys.argv[1])
-    run_server(p)
+    should_open = os.environ.get("OPEN_BROWSER", "").lower() in ("1", "true", "yes")
+    for arg in sys.argv[1:]:
+        if arg.isdigit():
+            p = int(arg)
+        elif arg in ("--open", "-o", "--browser", "-b"):
+            should_open = True
+    run_server(p, open_browser=should_open)

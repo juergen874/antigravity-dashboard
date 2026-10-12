@@ -704,6 +704,63 @@ html, body {
   30% { transform: translateY(-4px); opacity: 1; }
 }
 
+/* Live Activity Badge for Streaming */
+.live-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  margin-bottom: 8px;
+  background: rgba(56, 189, 248, 0.08);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: var(--radius-md);
+  font-size: 0.76rem;
+  color: var(--accent-cyan);
+  font-family: var(--font-mono);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-status-badge .live-pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-cyan);
+  box-shadow: 0 0 8px var(--accent-cyan);
+  animation: liveBadgePulse 1.2s infinite ease-in-out;
+  flex-shrink: 0;
+}
+
+@keyframes liveBadgePulse {
+  0%, 100% { transform: scale(0.9); opacity: 0.5; }
+  50% { transform: scale(1.25); opacity: 1; }
+}
+
+.live-status-badge .tool-detail {
+  color: var(--text-muted);
+  font-weight: normal;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
+  vertical-align: bottom;
+}
+
+.streaming-cursor {
+  display: inline-block;
+  color: var(--accent-cyan);
+  animation: cursorBlink 0.8s infinite;
+  font-weight: bold;
+  margin-left: 2px;
+}
+
+@keyframes cursorBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
 /* Floating Scroll Bottom Button */
 .scroll-bottom-btn {
   position: absolute;
