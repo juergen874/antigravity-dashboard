@@ -13,6 +13,12 @@ echo "=========================================================="
 echo "📁 Dashboard-Verzeichnis: $DIR"
 echo "🌐 Port: $PORT"
 
+if [ -f "$HOME/.gemini_api_key" ]; then
+    export GEMINI_API_KEY="$(cat "$HOME/.gemini_api_key" | tr -d '\r\n')"
+    export GOOGLE_API_KEY="$GEMINI_API_KEY"
+    echo "🔑 Gemini API-Key geladen."
+fi
+
 # Check Python 3
 if ! command -v python3 &> /dev/null; then
     echo "❌ Fehler: python3 wurde nicht gefunden. Bitte installiere Python ('pkg install python')."

@@ -231,6 +231,17 @@ def execute_agy_agent(prompt, cwd, conversation_id=None, images=None):
         if k.startswith("ANTIGRAVITY_") and k not in ("ANTIGRAVITY_DATA_DIR",):
             del env[k]
 
+    key_file = os.path.expanduser("~/.gemini_api_key")
+    if os.path.exists(key_file):
+        try:
+            with open(key_file, "r") as f:
+                k_val = f.read().strip()
+                if k_val:
+                    env["GEMINI_API_KEY"] = k_val
+                    env["GOOGLE_API_KEY"] = k_val
+        except Exception:
+            pass
+
     start_time = time.time()
     try:
         proc = subprocess.run(

@@ -1,3 +1,125 @@
+<p align="center">
+  <b><a href="#-english">🇬🇧 English</a></b> &nbsp;•&nbsp; <b><a href="#-deutsch">🇩🇪 Deutsch</a></b>
+</p>
+
+---
+
+<a name="-english"></a>
+# ⚡ Antigravity CLI • Mobile Web Dashboard
+
+An ultra-lightweight, modern, and mobile-friendly web dashboard for the **Google Antigravity CLI** and Termux/Linux development environments.
+
+---
+
+## ✨ Features Overview
+
+### 1. 🟢 Top Status Header
+- **Real-Time Connection Indicator:** Live pulse badge (Green = Connected with ping latency in ms, Yellow = Reconnecting, Red = Disconnected).
+- **Active Path (CWD):** Displays current working directory. Click/tap to open an interactive directory browser for quick navigation.
+- **Model Badge & Diagnostics:** Quick overview of the active LLM (`Gemini Flash`), uptime, and local network IPs.
+- **Top Actions:** Clear chat (🗑️), System diagnostics (ℹ️), and Dark/Slate Theme switcher (🌙).
+
+### 2. 💬 Main Area (Chat & Visuals)
+- **Mobile-First Responsive Layout:** Tailored for Android & iOS (Safe Area Insets, Dynamic Viewport Height `100dvh`, smooth touch scrolling).
+- **Real-Time Streaming (SSE):** Live streaming of Antigravity tokens and tool executions with animated progress badges.
+- **Rich Markdown Rendering:**
+  - Syntax-highlighted code blocks with language header and 1-click **Copy** button.
+  - GitHub Flavored Callouts (`> [!NOTE]`, `> [!TIP]`, `> [!IMPORTANT]`, `> [!WARNING]`, `> [!CAUTION]`).
+  - Tables, bullet lists, interactive links.
+  - **Text-to-Speech (TTS):** Integrated `🔊 Read aloud` option for assistant messages with automatic code-block skipping and pause controls.
+- **Image Preview & Fullscreen Lightbox:**
+  - Thumbnails for uploaded and generated images.
+  - Tap opens a responsive lightbox with zoom, download, and close options.
+- **Quick-Actions Bar:** Fast chips for `/help`, `/analyze`, `/goal`, `/plan`, `!ls`, `/status`, `!git status`, `/clear`.
+
+### 3. 🔬 Visual Code Explorer & AST Analyzer
+- **File Inspector Modal:** Tap any file in the directory browser to open:
+  - 📝 **Code Viewer & Editor:** View and edit text/Python files directly in your mobile browser with `💾 Save`.
+  - 🔬 **AST Function Map:** Parses Python scripts locally via `ast` into modules, classes, methods, and functions with arguments and docstrings. Each function includes a `⚡ Explain` shortcut that requests instant analysis in chat.
+  - 📊 **Flowchart (Mermaid):** Visualizes call relationships automatically as a responsive diagram.
+  - 🚀 **1-Click Test Execution:** Run scripts directly inside Termux with `🚀 Run` (`!python3 <file>`).
+
+### 4. ⌨️ Mobile Input Bar & Dictation
+- **Auto-Expanding Textarea:** Dynamically scales from 1 to 6 lines and collapses automatically upon submission.
+- **🎙️ Web Speech API Voice Input & Dictation:**
+  - **Live Transcription:** Real-time speech preview with pulsing waveform animation.
+  - **Punctuation Command Parsing:** Automatically converts spoken words like *"Period"*, *"Comma"*, *"Question mark"*, *"Exclamation point"*, *"Colon"*, *"New line"*.
+  - **Continuous Dictation:** Seamless sentence chaining without duplicates or interruptions.
+  - **Language Selector:** Toggle between 🇩🇪 German (`de-DE`) and 🇺🇸 English (`en-US`).
+- **📸 Camera & Photo Attachments:**
+  - Direct camera snapshots (`capture="environment"`).
+  - Multi-image gallery picker.
+  - Automatic client-side image compression for mobile transfers.
+  - Interactive preview chips with individual delete (✕).
+- **📋 Clipboard Paste Support:**
+  - Screenshots or copied image bitmaps (`Ctrl+V` or long-press paste) are automatically intercepted, uploaded, and attached to the prompt.
+- **Haptic Feedback:** Tactile vibration (`navigator.vibrate`) on key actions.
+
+### 5. 📱 Termux:Widget & 1-Tap Homescreen Launcher
+- **Background Tasks:** Launch and stop the dashboard directly from your Android **Termux:Widget** without terminal clutter.
+- **Auto-Browser Launch:** Automatically boots the server and opens `http://localhost:8080` in your default browser.
+- **Preconfigured Scripts:** Ready-to-use shortcuts for `~/.shortcuts/tasks/`.
+
+---
+
+## 🚀 Quick Start & Installation
+
+### Option A: Termux:Widget (Recommended for Android)
+
+1. Install **Termux:Widget** (via F-Droid).
+2. Run the installer inside the dashboard folder:
+   ```bash
+   cd ~/antigravity-dashboard
+   ./shortcuts/install_widget.sh
+   ```
+3. Place the **Termux:Widget** on your Android homescreen:
+   - `antigravity-dashboard.sh` – Starts server in background and opens browser.
+   - `antigravity-stop.sh` – Shuts down server cleanly.
+
+---
+
+### Option B: Terminal Command Line
+
+1. **Launch Dashboard:**
+   ```bash
+   cd ~/antigravity-dashboard
+   ./start.sh 8080
+   ```
+   *or directly via Python:*
+   ```bash
+   python3 ~/antigravity-dashboard/server.py 8080
+   ```
+
+2. **Open in Browser:**
+   - **On Device:** `http://localhost:8080`
+   - **Local Wi-Fi / Hotspot:** `http://[IP-ADDRESS]:8080` *(displayed on startup)*
+
+---
+
+## 🛠️ Slash Commands & Shell Bridge
+
+- `/analyze <file.py>` – Graphically inspects a Python file (AST, functions, Mermaid flow)
+- `!<command>` or `/run <command>` – Executes a shell command in Termux (e.g., `!python3 main.py` or `!git status`)
+- `/cd <path>` – Changes working directory
+- `/ls` – Lists files in active directory
+- `/status` – Displays server status and network info
+- `/plan <task>` – Formulates an implementation plan
+- `/goal <goal>` – Executes an autonomous multi-step goal
+- `/clear` – Clears chat history and restarts session
+- `/help` – Displays command help
+
+---
+
+## 📄 License
+
+Licensed under the [MIT License](LICENSE).
+
+---
+---
+
+<a name="-deutsch"></a>
+# 🇩🇪 Deutsche Beschreibung
+
 # ⚡ Antigravity CLI • Mobile Web Dashboard
 
 Ein extrem leichtgewichtiges, modernes und mobiles Web-Dashboard für die **Antigravity CLI** und Termux/Linux-Entwicklungsumgebungen.
